@@ -1,0 +1,72 @@
+#![allow(non_snake_case)]
+
+use std::sync::Arc;
+
+use esp_idf_hal::gpio::{Gpio12, Gpio13, Gpio14, Gpio15, Gpio16, Gpio17, Gpio2, Gpio21, Gpio4};
+use esp_idf_hal::spi::SPI2;
+use operit_host_api::HostManager::HostManager;
+use operit_host_api::{DeviceIoHost, HostResult, RobotFaceHost};
+
+use crate::display::Esp32Ili9341;
+use crate::gpio::Esp32GpioHost;
+use crate::pins::{LED_BLUE_PIN, LED_GREEN_PIN, LED_RED_PIN};
+use crate::robot_face::Esp32RobotFaceHost;
+use crate::{createRuntimeHostManager, esp32_2432s028HostEnvironment};
+
+/// Owns ESP32-2432S028 Host implementations constructed from board peripherals.
+pub struct Esp32Board {
+    gpioHost: Arc<Esp32GpioHost>,
+    robotFaceHost: Arc<Esp32RobotFaceHost>,
+}
+
+impl Esp32Board {
+    /// Takes the ESP32-2432S028 display and status-LED pins out of ESP-IDF peripherals.
+    pub fn new(
+        spi2: SPI2,
+        tftDc: Gpio2,
+        tftMiso: Gpio12,
+        tftMosi: Gpio13,
+        tftSclk: Gpio14,
+        tftCs: Gpio15,
+        tftBacklight: Gpio21,
+        ledRed: Gpio4,
+        ledGreen: Gpio16,
+        ledBlue: Gpio17,
+    ) -> HostResult<Self> {
+        let gpioHost = Arc::new(Esp32GpioHost::empty());
+        gpioHost.addOutput(LED_RED_PIN, ledRed, true)?;
+        gpioHost.addOutput(LED_GREEN_PIN, ledGreen, true)?;
+        gpioHost.addOutput(LED_BLUE_PIN, ledBlue, true)?;
+        let display = Esp32Ili9341::new(
+            spi2,
+            tftSclk,
+            tftMosi,
+            tftMiso,
+            tftCs,
+            tftDc,
+            tftBacklight,
+        )?;
+        let robotFaceHost = Arc::new(Esp32RobotFaceHost::new(Box::new(display))?);
+        Ok(Self {
+            gpioHost,
+            robotFaceHost,
+        })
+    }
+
+    /// Returns the board-owned digital I/O host.
+    pub fn gpioHost(&self) -> Arc<dyn DeviceIoHost> {
+        self.gpioHost.clone()
+    }
+
+    /// Returns the board-owned robot face host.
+    pub fn robotFaceHost(&self) -> Arc<dyn RobotFaceHost> {
+        self.robotFaceHost.clone()
+    }
+
+    /// Adds ESP32-2432S028 board capabilities to a HostManager.
+    pub fn installIntoHostManager(&self) -> HostManager {
+        createRuntimeHostManager(self.gpioHost())
+            .withRobotFaceHost(self.robotFaceHost())
+            .withHostEnvironment(esp32_2432s028HostEnvironment())
+    }
+}

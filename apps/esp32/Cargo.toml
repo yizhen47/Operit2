@@ -1,0 +1,27 @@
+[package]
+name = "operit-esp32"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Operit Edge firmware for ESP32-2432S028."
+
+[[bin]]
+name = "operit-esp32"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+log = "0.4"
+operit-board-esp32 = { path = "../../hosts/boards/esp32" }
+operit-host-api = { path = "../../core/crates/foundation/host-api" }
+operit-node-edge = { path = "../../core/crates/node/edge" }
+operit-proxy-edge = { path = "../../core/crates/proxy/edge" }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros"] }
+
+[target.'cfg(target_os = "espidf")'.dependencies]
+esp-idf-hal = "0.46.2"
+esp-idf-svc = "0.52.1"
+
+[build-dependencies]
+embuild = "0.33"
