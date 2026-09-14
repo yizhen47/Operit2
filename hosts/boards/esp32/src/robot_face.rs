@@ -81,14 +81,14 @@ impl FaceCanvas for MemoryFaceCanvas {
 }
 
 /// Renders validated robot face expressions through a board display canvas.
-pub struct Esp32RobotFaceHost {
-    canvas: Mutex<Box<dyn FaceCanvas>>,
+pub struct Esp32RobotFaceHost<C: FaceCanvas> {
+    canvas: Mutex<C>,
     state: Mutex<RobotFaceState>,
 }
 
-impl Esp32RobotFaceHost {
+impl<C: FaceCanvas> Esp32RobotFaceHost<C> {
     /// Creates a robot face host around one display canvas.
-    pub fn new(canvas: Box<dyn FaceCanvas>) -> HostResult<Self> {
+    pub fn new(canvas: C) -> HostResult<Self> {
         let host = Self {
             canvas: Mutex::new(canvas),
             state: Mutex::new(RobotFaceState {
@@ -99,17 +99,12 @@ impl Esp32RobotFaceHost {
         Ok(host)
     }
 
-    /// Creates a robot face host backed by an in-memory canvas.
-    pub fn withMemoryCanvas(width: u16, height: u16) -> HostResult<Self> {
-        Self::new(Box::new(MemoryFaceCanvas::new(width, height)))
-    }
-
     /// Paints the empty plugin shelf over the face canvas.
     pub fn paintPluginShelf(&self) -> HostResult<()> {
         let mut canvas = self.canvas.lock().map_err(|error| {
             HostError::new(format!("robot face canvas lock poisoned: {error}"))
         })?;
-        crate::shell::paintPluginShelf(&mut **canvas)
+        crate::shell::paintPluginShelf(&mut *canvas)
     }
 
     /// Paints one already-validated expression onto the canvas.
@@ -126,7 +121,14 @@ impl Esp32RobotFaceHost {
     }
 }
 
-impl RobotFaceHost for Esp32RobotFaceHost {
+impl Esp32RobotFaceHost<MemoryFaceCanvas> {
+    /// Creates a robot face host backed by an in-memory canvas.
+    pub fn withMemoryCanvas(width: u16, height: u16) -> HostResult<Self> {
+        Self::new(MemoryFaceCanvas::new(width, height))
+    }
+}
+
+impl<C: FaceCanvas> RobotFaceHost for Esp32RobotFaceHost<C> {
     /// Writes one validated expression and paints it on the board display.
     fn setExpression(&self, request: RobotFaceExpressionRequest) -> HostResult<RobotFaceState> {
         validateExpression(&request.expression)?;

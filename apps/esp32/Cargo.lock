@@ -1015,6 +1015,7 @@ name = "operit-board-esp32"
 version = "0.1.0"
 dependencies = [
  "esp-idf-hal",
+ "log",
  "operit-host-api",
 ]
 

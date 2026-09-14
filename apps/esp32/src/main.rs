@@ -28,7 +28,9 @@ fn main() {
 
 #[cfg(target_os = "espidf")]
 fn runFirmware() -> operit_host_api::HostResult<()> {
+    use std::future::Future;
     use std::sync::Arc;
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
     use esp_idf_hal::delay::FreeRtos;
     use esp_idf_hal::peripherals::Peripherals;
@@ -39,6 +41,35 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
 
     fn edgeError(error: EdgeProxyError) -> HostError {
         HostError::new(error.to_string())
+    }
+
+    fn noopWaker() -> Waker {
+        unsafe fn clone(_: *const ()) -> RawWaker {
+            noopRawWaker()
+        }
+        unsafe fn wake(_: *const ()) {}
+        unsafe fn wakeByRef(_: *const ()) {}
+        unsafe fn drop(_: *const ()) {}
+
+        fn noopRawWaker() -> RawWaker {
+            static VTABLE: RawWakerVTable =
+                RawWakerVTable::new(clone, wake, wakeByRef, drop);
+            RawWaker::new(std::ptr::null(), &VTABLE)
+        }
+
+        unsafe { Waker::from_raw(noopRawWaker()) }
+    }
+
+    fn blockOn<F: Future>(future: F) -> F::Output {
+        let waker = noopWaker();
+        let mut context = Context::from_waker(&waker);
+        let mut future = std::pin::pin!(future);
+        loop {
+            match future.as_mut().poll(&mut context) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => FreeRtos::delay_ms(1),
+            }
+        }
     }
 
     use crate::app::Esp32App;
@@ -77,13 +108,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     let edgeProxy = EdgeProxy::new(edgeNode);
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
     let mut app = Esp32App::new(edgeProxy, Arc::clone(&status));
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| HostError::new(error.to_string()))?;
-
-    runtime
-        .block_on(app.setExpression("booting"))
+    blockOn(app.setExpression("booting"))
         .map_err(edgeError)?;
     let _wifi = if config.hasWifi() {
         match Esp32Wifi::connect(modem, &config) {
@@ -91,29 +116,24 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 let ip = wifi.ipv4()?;
                 status.setWifiSsid(config.wifiSsid.clone());
                 status.setIpv4(ip.to_string());
-                runtime
-                    .block_on(app.setExpression("online"))
+                blockOn(app.setExpression("online"))
                     .map_err(edgeError)?;
-                runtime
-                    .block_on(app.setDigitalOutput(LED_GREEN_PIN, true))
+                blockOn(app.setDigitalOutput(LED_GREEN_PIN, true))
                     .map_err(edgeError)?;
                 log::info!("operit-esp32 online at http://{ip}/");
                 Some(wifi)
             }
             Err(error) => {
-                runtime
-                    .block_on(app.setExpression("error"))
+                blockOn(app.setExpression("error"))
                     .map_err(edgeError)?;
-                runtime
-                    .block_on(app.setDigitalOutput(LED_RED_PIN, true))
+                blockOn(app.setDigitalOutput(LED_RED_PIN, true))
                     .map_err(edgeError)?;
                 log::error!("operit-esp32 wifi failed: {}", error.message);
                 None
             }
         }
     } else {
-        runtime
-            .block_on(app.setExpression("online"))
+        blockOn(app.setExpression("online"))
             .map_err(edgeError)?;
         log::warn!(
             "operit-esp32 starting without Wi-Fi; set OPERIT_WIFI_SSID to enable the home page"
@@ -146,8 +166,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                     }
                     HomeSurface::Face => {
                         let expression = status.snapshot().expression;
-                        runtime
-                            .block_on(app.setExpression(&expression))
+                        blockOn(app.setExpression(&expression))
                             .map_err(edgeError)?;
                         log::info!("operit-esp32 returned to face");
                     }

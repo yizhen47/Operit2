@@ -20,7 +20,7 @@ use crate::{createRuntimeHostManager, esp32_2432s028HostEnvironment};
 /// Owns ESP32-2432S028 Host implementations constructed from board peripherals.
 pub struct Esp32Board {
     gpioHost: Arc<Esp32GpioHost>,
-    robotFaceHost: Arc<Esp32RobotFaceHost>,
+    robotFaceHost: Arc<Esp32RobotFaceHost<Esp32Ili9341>>,
     touch: Esp32Touch,
 }
 
@@ -44,10 +44,13 @@ impl Esp32Board {
         touchCs: Gpio33<'static>,
         touchIrq: Gpio36<'static>,
     ) -> HostResult<Self> {
+        log::info!("esp32 board: configuring status LEDs");
         let gpioHost = Arc::new(Esp32GpioHost::empty());
         gpioHost.addOutput(LED_RED_PIN, ledRed, true)?;
         gpioHost.addOutput(LED_GREEN_PIN, ledGreen, true)?;
         gpioHost.addOutput(LED_BLUE_PIN, ledBlue, true)?;
+        log::info!("esp32 board: status LEDs ready");
+        log::info!("esp32 board: initializing TFT SPI");
         let display = Esp32Ili9341::new(
             spi2,
             tftSclk,
@@ -57,8 +60,13 @@ impl Esp32Board {
             tftDc,
             tftBacklight,
         )?;
-        let robotFaceHost = Arc::new(Esp32RobotFaceHost::new(Box::new(display))?);
+        log::info!("esp32 board: TFT initialized");
+        log::info!("esp32 board: creating face host");
+        let robotFaceHost = Arc::new(Esp32RobotFaceHost::new(display)?);
+        log::info!("esp32 board: face host ready");
+        log::info!("esp32 board: initializing touch SPI");
         let touch = Esp32Touch::new(spi3, touchSclk, touchMosi, touchMiso, touchCs, touchIrq)?;
+        log::info!("esp32 board: touch ready");
         Ok(Self {
             gpioHost,
             robotFaceHost,

@@ -112,20 +112,14 @@ mod driver {
                 &SpiConfig::new().baudrate(2.MHz().into()),
             )
             .map_err(|error| HostError::new(error.to_string()))?;
-            let mut irq =
-                PinDriver::input(irq).map_err(|error| HostError::new(error.to_string()))?;
-            irq.set_pull(Pull::Up)
+            let irq = PinDriver::input(irq, Pull::Floating)
                 .map_err(|error| HostError::new(error.to_string()))?;
             Ok(Self { spi, irq })
         }
 
         /// Returns one logical point while the panel is pressed.
         pub fn poll(&mut self) -> HostResult<Option<TouchPoint>> {
-            if self
-                .irq
-                .is_high()
-                .map_err(|error| HostError::new(error.to_string()))?
-            {
+            if self.irq.is_high() {
                 return Ok(None);
             }
             let z = self.read12(CMD_Z1)?;

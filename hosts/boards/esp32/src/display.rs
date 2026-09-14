@@ -21,6 +21,18 @@ const ILI9341_PASET: u8 = 0x2B;
 const ILI9341_RAMWR: u8 = 0x2C;
 const ILI9341_MADCTL: u8 = 0x36;
 const ILI9341_PIXFMT: u8 = 0x3A;
+const ILI9341_FRMCTR1: u8 = 0xB1;
+const ILI9341_DISCTRL: u8 = 0xB6;
+const ILI9341_PWCTRL1: u8 = 0xC0;
+const ILI9341_PWCTRL2: u8 = 0xC1;
+const ILI9341_VMCTRL1: u8 = 0xC5;
+const ILI9341_VMCTRL2: u8 = 0xC7;
+const ILI9341_PWCTRLA: u8 = 0xCB;
+const ILI9341_PWCTRLB: u8 = 0xCF;
+const ILI9341_ENABLE3G: u8 = 0xF2;
+const ILI9341_GAMMASET: u8 = 0x26;
+const ILI9341_POSGAMMA: u8 = 0xE0;
+const ILI9341_NEGGAMMA: u8 = 0xE1;
 
 /// Drives the ESP32-2432S028 ILI9341 panel over HSPI.
 pub struct Esp32Ili9341 {
@@ -69,7 +81,7 @@ impl Esp32Ili9341 {
         let mut backlight =
             PinDriver::output(backlight).map_err(|error| HostError::new(error.to_string()))?;
         backlight
-            .set_high()
+            .set_low()
             .map_err(|error| HostError::new(error.to_string()))?;
         let (width, height) = logicalDisplaySize(DISPLAY_ROTATION_DEGREES);
         let mut display = Self {
@@ -80,20 +92,46 @@ impl Esp32Ili9341 {
             height,
         };
         display.initialize()?;
+        display
+            ._backlight
+            .set_high()
+            .map_err(|error| HostError::new(error.to_string()))?;
         Ok(display)
     }
 
     /// Sends the ILI9341 power-up sequence and selects the firmware rotation.
     fn initialize(&mut self) -> HostResult<()> {
         self.writeCommand(ILI9341_SWRESET, &[])?;
-        FreeRtos::delay_ms(150);
-        self.writeCommand(ILI9341_SLPOUT, &[])?;
-        FreeRtos::delay_ms(16);
-        self.writeCommand(ILI9341_PIXFMT, &[0x55])?;
+        FreeRtos::delay_ms(120);
+        self.writeCommand(ILI9341_PWCTRLB, &[0x00, 0xC1, 0x30])?;
+        self.writeCommand(0xED, &[0x64, 0x03, 0x12, 0x81])?;
+        self.writeCommand(0xE8, &[0x85, 0x00, 0x78])?;
+        self.writeCommand(ILI9341_PWCTRLA, &[0x39, 0x2C, 0x00, 0x34, 0x02])?;
+        self.writeCommand(0xF7, &[0x20])?;
+        self.writeCommand(0xEA, &[0x00, 0x00])?;
+        self.writeCommand(ILI9341_PWCTRL1, &[0x23])?;
+        self.writeCommand(ILI9341_PWCTRL2, &[0x10])?;
+        self.writeCommand(ILI9341_VMCTRL1, &[0x3E, 0x28])?;
+        self.writeCommand(ILI9341_VMCTRL2, &[0x86])?;
         self.writeCommand(ILI9341_MADCTL, &[madctlForRotation(DISPLAY_ROTATION_DEGREES)])?;
+        self.writeCommand(ILI9341_PIXFMT, &[0x55])?;
+        self.writeCommand(ILI9341_FRMCTR1, &[0x00, 0x18])?;
+        self.writeCommand(ILI9341_DISCTRL, &[0x08, 0x82, 0x27])?;
+        self.writeCommand(ILI9341_ENABLE3G, &[0x00])?;
+        self.writeCommand(ILI9341_GAMMASET, &[0x01])?;
+        self.writeCommand(
+            ILI9341_POSGAMMA,
+            &[0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00],
+        )?;
+        self.writeCommand(
+            ILI9341_NEGGAMMA,
+            &[0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F],
+        )?;
+        self.writeCommand(ILI9341_SLPOUT, &[])?;
+        FreeRtos::delay_ms(120);
         self.writeCommand(ILI9341_NORON, &[])?;
         self.writeCommand(ILI9341_DISPON, &[])?;
-        FreeRtos::delay_ms(16);
+        FreeRtos::delay_ms(20);
         Ok(())
     }
 
