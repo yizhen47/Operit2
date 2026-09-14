@@ -22,16 +22,16 @@ pub struct Esp32Board {
 impl Esp32Board {
     /// Takes the ESP32-2432S028 display and status-LED pins out of ESP-IDF peripherals.
     pub fn new(
-        spi2: SPI2,
-        tftDc: Gpio2,
-        tftMiso: Gpio12,
-        tftMosi: Gpio13,
-        tftSclk: Gpio14,
-        tftCs: Gpio15,
-        tftBacklight: Gpio21,
-        ledRed: Gpio4,
-        ledGreen: Gpio16,
-        ledBlue: Gpio17,
+        spi2: SPI2<'static>,
+        tftDc: Gpio2<'static>,
+        tftMiso: Gpio12<'static>,
+        tftMosi: Gpio13<'static>,
+        tftSclk: Gpio14<'static>,
+        tftCs: Gpio15<'static>,
+        tftBacklight: Gpio21<'static>,
+        ledRed: Gpio4<'static>,
+        ledGreen: Gpio16<'static>,
+        ledBlue: Gpio17<'static>,
     ) -> HostResult<Self> {
         let gpioHost = Arc::new(Esp32GpioHost::empty());
         gpioHost.addOutput(LED_RED_PIN, ledRed, true)?;

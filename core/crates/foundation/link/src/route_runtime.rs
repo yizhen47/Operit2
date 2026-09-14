@@ -1,6 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::{CoreCallRequest, CoreCallResponse, CoreEventStream, CoreLinkError, CoreWatchRequest};
@@ -56,7 +56,7 @@ pub trait CoreRouteRuntime: Send + Sync {
 }
 
 static CORE_ROUTE_RUNTIME: OnceLock<RwLock<Option<Arc<dyn CoreRouteRuntime>>>> = OnceLock::new();
-static CORE_ROUTE_REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+static CORE_ROUTE_REQUEST_SEQUENCE: AtomicU32 = AtomicU32::new(1);
 
 /// Creates a unique request identifier for one annotation wrapper invocation.
 pub fn nextCoreRouteRequestId(methodName: &str) -> String {

@@ -28,7 +28,7 @@ impl Esp32WebHome {
                 let body = renderHomePage(&homeStatus.snapshot());
                 let mut response = request.into_ok_response()?;
                 response.write_all(body.as_bytes())?;
-                Ok(())
+                Ok::<(), esp_idf_svc::io::EspIOError>(())
             })
             .map_err(|error| HostError::new(format!("http /: {error}")))?;
         server
@@ -40,7 +40,7 @@ impl Esp32WebHome {
                     &[("Content-Type", "application/json; charset=utf-8")],
                 )?;
                 response.write_all(body.as_bytes())?;
-                Ok(())
+                Ok::<(), esp_idf_svc::io::EspIOError>(())
             })
             .map_err(|error| HostError::new(format!("http /status.json: {error}")))?;
         Ok(Self { _server: server })

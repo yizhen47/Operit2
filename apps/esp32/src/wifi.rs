@@ -17,7 +17,7 @@ pub struct Esp32Wifi {
 
 impl Esp32Wifi {
     /// Connects to the compile-time station network and waits for IPv4.
-    pub fn connect(modem: Modem, config: &Esp32FirmwareConfig) -> HostResult<Self> {
+    pub fn connect(modem: Modem<'static>, config: &Esp32FirmwareConfig) -> HostResult<Self> {
         let sysLoop = EspSystemEventLoop::take()
             .map_err(|error| HostError::new(format!("event loop: {error}")))?;
         let nvs = EspDefaultNvsPartition::take()
@@ -29,27 +29,23 @@ impl Esp32Wifi {
         )
         .map_err(|error| HostError::new(format!("wifi wrap: {error}")))?;
         let mut client = ClientConfiguration::default();
-        client.ssid = config
-            .wifiSsid
-            .as_str()
-            .try_into()
+        client.ssid.clear();
+        client
+            .ssid
+            .push_str(&config.wifiSsid)
             .map_err(|_| HostError::new("Wi-Fi SSID exceeds the ESP-IDF station field"))?;
-        client.password = config
-            .wifiPassword
-            .as_str()
-            .try_into()
+        client.password.clear();
+        client
+            .password
+            .push_str(&config.wifiPassword)
             .map_err(|_| HostError::new("Wi-Fi password exceeds the ESP-IDF station field"))?;
-        wifi.set_configuration(&Configuration::Client(ClientConfiguration {
-            ssid: client.ssid,
-            password: client.password,
-            auth_method: if config.wifiPassword.is_empty() {
-                AuthMethod::None
-            } else {
-                AuthMethod::WPA2Personal
-            },
-            ..Default::default()
-        }))
-        .map_err(|error| HostError::new(format!("wifi config: {error}")))?;
+        client.auth_method = if config.wifiPassword.is_empty() {
+            AuthMethod::None
+        } else {
+            AuthMethod::WPA2Personal
+        };
+        wifi.set_configuration(&Configuration::Client(client))
+            .map_err(|error| HostError::new(format!("wifi config: {error}")))?;
         wifi.start()
             .map_err(|error| HostError::new(format!("wifi start: {error}")))?;
         wifi.connect()

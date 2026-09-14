@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::future::Future;
 use std::marker::PhantomData;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -19,7 +19,7 @@ tokio::task_local! {
     static ASYNC_CORE_STREAM_CAPTURE: Arc<Mutex<Vec<CoreStreamAttachment>>>;
 }
 
-static NEXT_CORE_STREAM_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_CORE_STREAM_ID: AtomicU32 = AtomicU32::new(0);
 
 /// Carries one in-process stream source from a serialized Core value into its owning proxy.
 #[derive(Clone)]

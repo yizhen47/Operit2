@@ -2,7 +2,6 @@
 
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::gpio::{InputPin, Output, OutputPin, PinDriver};
-use esp_idf_hal::peripheral::Peripheral;
 use esp_idf_hal::spi::{
     config::Config as SpiConfig, Dma, SpiAnyPins, SpiDeviceDriver, SpiDriver, SpiDriverConfig,
 };
@@ -35,7 +34,7 @@ pub struct Esp32Ili9341 {
 impl Esp32Ili9341 {
     /// Initializes the ILI9341 at the firmware portrait rotation.
     pub fn new<SPI, SCLK, MOSI, MISO, CS, DC, BL>(
-        spi: impl Peripheral<P = SPI> + 'static,
+        spi: SPI,
         sclk: SCLK,
         mosi: MOSI,
         miso: MISO,
@@ -44,7 +43,7 @@ impl Esp32Ili9341 {
         backlight: BL,
     ) -> HostResult<Self>
     where
-        SPI: SpiAnyPins,
+        SPI: SpiAnyPins + 'static,
         SCLK: OutputPin + 'static,
         MOSI: OutputPin + 'static,
         MISO: InputPin + 'static,

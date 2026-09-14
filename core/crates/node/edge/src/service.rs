@@ -1,7 +1,7 @@
 #![allow(non_snake_case)]
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 
@@ -216,7 +216,7 @@ pub trait RobotFaceService: Send + Sync {
 pub struct HostDeviceIoService {
     hostManager: HostManager,
     watchers: Arc<Mutex<BTreeMap<u8, BTreeMap<u64, Sender<DeviceDigitalOutputState>>>>>,
-    nextWatcherId: AtomicU64,
+    nextWatcherId: AtomicU32,
 }
 
 impl HostDeviceIoService {
@@ -225,7 +225,7 @@ impl HostDeviceIoService {
         Self {
             hostManager,
             watchers: Arc::new(Mutex::new(BTreeMap::new())),
-            nextWatcherId: AtomicU64::new(1),
+            nextWatcherId: AtomicU32::new(1),
         }
     }
 
@@ -297,7 +297,7 @@ impl DeviceIoService for HostDeviceIoService {
         sender
             .send(state)
             .map_err(|error| EdgeServiceError::new(error.to_string()))?;
-        let watcherId = self.nextWatcherId.fetch_add(1, Ordering::Relaxed);
+        let watcherId = u64::from(self.nextWatcherId.fetch_add(1, Ordering::Relaxed));
         watchers.entry(pin).or_default().insert(watcherId, sender);
         let watchersForClose = Arc::clone(&self.watchers);
         Ok(DeviceIoStateStream::withOnClose(receiver, move || {
@@ -318,7 +318,7 @@ pub fn createDeviceIoService(hostManager: HostManager) -> Arc<dyn DeviceIoServic
 pub struct HostRobotFaceService {
     hostManager: HostManager,
     watchers: Arc<Mutex<BTreeMap<u64, Sender<RobotFaceState>>>>,
-    nextWatcherId: AtomicU64,
+    nextWatcherId: AtomicU32,
 }
 
 impl HostRobotFaceService {
@@ -327,7 +327,7 @@ impl HostRobotFaceService {
         Self {
             hostManager,
             watchers: Arc::new(Mutex::new(BTreeMap::new())),
-            nextWatcherId: AtomicU64::new(1),
+            nextWatcherId: AtomicU32::new(1),
         }
     }
 
@@ -385,7 +385,7 @@ impl RobotFaceService for HostRobotFaceService {
         sender
             .send(state)
             .map_err(|error| EdgeServiceError::new(error.to_string()))?;
-        let watcherId = self.nextWatcherId.fetch_add(1, Ordering::Relaxed);
+        let watcherId = u64::from(self.nextWatcherId.fetch_add(1, Ordering::Relaxed));
         watchers.insert(watcherId, sender);
         let watchersForClose = Arc::clone(&self.watchers);
         Ok(RobotFaceStateStream::withOnClose(receiver, move || {
