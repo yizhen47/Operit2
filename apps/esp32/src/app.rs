@@ -6,17 +6,33 @@ use operit_host_api::{DeviceDigitalOutputState, RobotFaceState};
 use operit_proxy_edge::{EdgeDeviceIoClient, EdgeProxyError, EdgeRobotFaceClient};
 
 use crate::status::FirmwareStatus;
+use crate::ui::{HomeSurface, HomeUi, UiGesture};
 
 /// Owns ESP32-2432S028 device behavior on top of the Edge Proxy contract.
 pub struct Esp32App<C> {
     edgeClient: C,
     status: Arc<FirmwareStatus>,
+    home: HomeUi,
 }
 
 impl<C> Esp32App<C> {
     /// Creates the firmware app around one Edge proxy and shared HTTP status.
     pub fn new(edgeClient: C, status: Arc<FirmwareStatus>) -> Self {
-        Self { edgeClient, status }
+        Self {
+            edgeClient,
+            status,
+            home: HomeUi::new(),
+        }
+    }
+
+    /// Returns the surface currently owned by the home shell.
+    pub fn surface(&self) -> HomeSurface {
+        self.home.surface()
+    }
+
+    /// Applies one home-shell gesture. Returns whether the visible surface changed.
+    pub fn handleGesture(&mut self, gesture: UiGesture) -> bool {
+        self.home.apply(gesture)
     }
 }
 
@@ -29,6 +45,12 @@ where
         &mut self,
         expression: &str,
     ) -> Result<RobotFaceState, EdgeProxyError> {
+        if self.home.surface() != HomeSurface::Face {
+            self.status.setExpression(expression.to_string());
+            return Ok(RobotFaceState {
+                expression: expression.to_string(),
+            });
+        }
         let state = self
             .edgeClient
             .setExpression(expression.to_string())
@@ -130,5 +152,19 @@ mod tests {
             .expect("online expression must commit");
         assert_eq!(state.expression, "online");
         assert_eq!(status.snapshot().expression, "online");
+    }
+
+    #[test]
+    fn swipeDownOpensPluginShelf() {
+        let status = Arc::new(FirmwareStatus::new("neutral"));
+        let mut app = Esp32App::new(
+            TestEdgeClient {
+                expression: "neutral".to_string(),
+            },
+            status,
+        );
+        assert_eq!(app.surface(), crate::ui::HomeSurface::Face);
+        assert!(app.handleGesture(crate::ui::UiGesture::SwipeDown));
+        assert_eq!(app.surface(), crate::ui::HomeSurface::PluginShelf);
     }
 }

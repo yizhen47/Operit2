@@ -36,19 +36,19 @@ pub const TFT_DC_PIN: u8 = 2;
 /// TFT backlight pin.
 pub const TFT_BACKLIGHT_PIN: u8 = 21;
 
-/// Resistive-touch SPI clock pin. Reserved for a later Host surface.
+/// Resistive-touch SPI clock pin.
 pub const TOUCH_SCLK_PIN: u8 = 25;
 
-/// Resistive-touch SPI MOSI pin. Reserved for a later Host surface.
+/// Resistive-touch SPI MOSI pin.
 pub const TOUCH_MOSI_PIN: u8 = 32;
 
-/// Resistive-touch SPI MISO pin. Reserved for a later Host surface.
+/// Resistive-touch SPI MISO pin.
 pub const TOUCH_MISO_PIN: u8 = 39;
 
-/// Resistive-touch chip-select pin. Reserved for a later Host surface.
+/// Resistive-touch chip-select pin.
 pub const TOUCH_CS_PIN: u8 = 33;
 
-/// Resistive-touch interrupt pin. Reserved for a later Host surface.
+/// Resistive-touch interrupt pin. Active-low while pressed.
 pub const TOUCH_INT_PIN: u8 = 36;
 
 /// Active-low red status LED pin.

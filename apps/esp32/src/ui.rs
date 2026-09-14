@@ -1,7 +1,5 @@
 #![allow(non_snake_case)]
 
-use std::sync::atomic::{AtomicU8, Ordering};
-
 /// Vertical distance, in logical pixels, that opens or closes the plugin shelf.
 pub const SWIPE_THRESHOLD_PX: i16 = 40;
 
@@ -14,7 +12,7 @@ pub enum HomeSurface {
     PluginShelf,
 }
 
-/// Gestures the home shell understands. Touch Host can feed these later.
+/// Gestures the home shell understands.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UiGesture {
     SwipeDown,
@@ -54,6 +52,42 @@ impl HomeUi {
     }
 }
 
+/// Tracks one press-drag-release and emits a vertical swipe on lift.
+pub struct SwipeTracker {
+    origin: Option<(i16, i16)>,
+    last: Option<(i16, i16)>,
+}
+
+impl SwipeTracker {
+    /// Creates an idle tracker.
+    pub fn new() -> Self {
+        Self {
+            origin: None,
+            last: None,
+        }
+    }
+
+    /// Feeds one sample. A swipe is reported when the finger lifts.
+    pub fn onSample(&mut self, point: Option<(u16, u16)>) -> Option<UiGesture> {
+        match point {
+            Some((x, y)) => {
+                let sample = (x as i16, y as i16);
+                if self.origin.is_none() {
+                    self.origin = Some(sample);
+                }
+                self.last = Some(sample);
+                None
+            }
+            None => match (self.origin.take(), self.last.take()) {
+                (Some(origin), Some(last)) => {
+                    gestureFromSwipe(origin.0, origin.1, last.0, last.1)
+                }
+                _ => None,
+            },
+        }
+    }
+}
+
 /// Classifies a drag as a vertical home-shell swipe.
 pub fn gestureFromSwipe(startX: i16, startY: i16, endX: i16, endY: i16) -> Option<UiGesture> {
     let dx = endX.saturating_sub(startX);
@@ -65,42 +99,6 @@ pub fn gestureFromSwipe(startX: i16, startY: i16, endX: i16, endY: i16) -> Optio
         Some(UiGesture::SwipeDown)
     } else {
         Some(UiGesture::SwipeUp)
-    }
-}
-
-/// One-slot mailbox so the HTTP home page can post a swipe without extra tasks.
-pub struct GestureMailbox {
-    pending: AtomicU8,
-}
-
-impl GestureMailbox {
-    const NONE: u8 = 0;
-    const DOWN: u8 = 1;
-    const UP: u8 = 2;
-
-    /// Creates an empty mailbox.
-    pub fn new() -> Self {
-        Self {
-            pending: AtomicU8::new(Self::NONE),
-        }
-    }
-
-    /// Replaces any unread gesture with `gesture`.
-    pub fn post(&self, gesture: UiGesture) {
-        let code = match gesture {
-            UiGesture::SwipeDown => Self::DOWN,
-            UiGesture::SwipeUp => Self::UP,
-        };
-        self.pending.store(code, Ordering::SeqCst);
-    }
-
-    /// Takes the pending gesture, if any.
-    pub fn take(&self) -> Option<UiGesture> {
-        match self.pending.swap(Self::NONE, Ordering::SeqCst) {
-            Self::DOWN => Some(UiGesture::SwipeDown),
-            Self::UP => Some(UiGesture::SwipeUp),
-            _ => None,
-        }
     }
 }
 
@@ -141,11 +139,11 @@ mod tests {
     }
 
     #[test]
-    fn mailboxStoresLatestGesture() {
-        let mailbox = GestureMailbox::new();
-        mailbox.post(UiGesture::SwipeDown);
-        mailbox.post(UiGesture::SwipeUp);
-        assert_eq!(mailbox.take(), Some(UiGesture::SwipeUp));
-        assert_eq!(mailbox.take(), None);
+    fn trackerEmitsSwipeOnRelease() {
+        let mut tracker = SwipeTracker::new();
+        assert_eq!(tracker.onSample(Some((120, 20))), None);
+        assert_eq!(tracker.onSample(Some((118, 90))), None);
+        assert_eq!(tracker.onSample(None), Some(UiGesture::SwipeDown));
+        assert_eq!(tracker.onSample(None), None);
     }
 }

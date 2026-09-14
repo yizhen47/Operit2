@@ -104,6 +104,14 @@ impl Esp32RobotFaceHost {
         Self::new(Box::new(MemoryFaceCanvas::new(width, height)))
     }
 
+    /// Paints the empty plugin shelf over the face canvas.
+    pub fn paintPluginShelf(&self) -> HostResult<()> {
+        let mut canvas = self.canvas.lock().map_err(|error| {
+            HostError::new(format!("robot face canvas lock poisoned: {error}"))
+        })?;
+        crate::shell::paintPluginShelf(&mut **canvas)
+    }
+
     /// Paints one already-validated expression onto the canvas.
     fn paint(&self, expression: &str) -> HostResult<FaceLayout> {
         let mut canvas = self.canvas.lock().map_err(|error| {
@@ -180,6 +188,20 @@ mod tests {
         assert_eq!(
             host.getExpression()
                 .expect("initial expression must remain")
+                .expression,
+            INITIAL_EXPRESSION
+        );
+    }
+
+    #[test]
+    fn paintsPluginShelfWithoutChangingExpression() {
+        let host =
+            Esp32RobotFaceHost::withMemoryCanvas(240, 320).expect("memory face host must start");
+        host.paintPluginShelf()
+            .expect("plugin shelf must paint");
+        assert_eq!(
+            host.getExpression()
+                .expect("face expression must stay committed")
                 .expression,
             INITIAL_EXPRESSION
         );

@@ -3,6 +3,7 @@
 mod app;
 mod config;
 mod status;
+mod ui;
 
 #[cfg(target_os = "espidf")]
 mod web;
@@ -52,7 +53,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     let config = Esp32FirmwareConfig::fromEnv();
     let peripherals = Peripherals::take().map_err(|error| HostError::new(error.to_string()))?;
     let modem = peripherals.modem;
-    let board = Esp32Board::new(
+    let mut board = Esp32Board::new(
         peripherals.spi2,
         peripherals.pins.gpio2,
         peripherals.pins.gpio12,
@@ -63,6 +64,12 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         peripherals.pins.gpio4,
         peripherals.pins.gpio16,
         peripherals.pins.gpio17,
+        peripherals.spi3,
+        peripherals.pins.gpio25,
+        peripherals.pins.gpio32,
+        peripherals.pins.gpio39,
+        peripherals.pins.gpio33,
+        peripherals.pins.gpio36,
     )?;
     let hostManager = board.installIntoHostManager();
     let edgeNode = EdgeNode::new(createDeviceIoService(hostManager.clone()))
@@ -119,7 +126,34 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         Some(Esp32WebHome::start(Arc::clone(&status), config.httpPort)?)
     };
 
+    use crate::ui::{HomeSurface, SwipeTracker};
+
+    let mut swipe = SwipeTracker::new();
     loop {
-        FreeRtos::delay_ms(1000);
+        let point = match board.pollTouch() {
+            Ok(point) => point,
+            Err(error) => {
+                log::warn!("operit-esp32 touch: {}", error.message);
+                None
+            }
+        };
+        if let Some(gesture) = swipe.onSample(point.map(|sample| (sample.x, sample.y))) {
+            if app.handleGesture(gesture) {
+                match app.surface() {
+                    HomeSurface::PluginShelf => {
+                        board.paintPluginShelf()?;
+                        log::info!("operit-esp32 opened plugin shelf");
+                    }
+                    HomeSurface::Face => {
+                        let expression = status.snapshot().expression;
+                        runtime
+                            .block_on(app.setExpression(&expression))
+                            .map_err(edgeError)?;
+                        log::info!("operit-esp32 returned to face");
+                    }
+                }
+            }
+        }
+        FreeRtos::delay_ms(20);
     }
 }

@@ -11,6 +11,8 @@ use operit_host_api::{
 pub mod face;
 pub mod pins;
 pub mod robot_face;
+pub mod shell;
+pub mod touch;
 
 #[cfg(target_os = "espidf")]
 mod board;
@@ -25,6 +27,8 @@ pub use board::Esp32Board;
 pub use display::Esp32Ili9341;
 #[cfg(target_os = "espidf")]
 pub use gpio::Esp32GpioHost;
+#[cfg(target_os = "espidf")]
+pub use touch::Esp32Touch;
 
 pub use face::{
     faceLayout, rgb565, validateExpression, FaceLayout, FaceRect, INITIAL_EXPRESSION,
@@ -38,6 +42,8 @@ pub use pins::{
     TOUCH_SCLK_PIN,
 };
 pub use robot_face::{Esp32RobotFaceHost, FaceCanvas, MemoryFaceCanvas};
+pub use shell::{paintPluginShelf, PLUGIN_SLOT_COUNT};
+pub use touch::{mapRawToLogical, TouchPoint};
 
 /// Creates the HostManager used by an ESP32 Edge Core app.
 pub fn createRuntimeHostManager(deviceIoHost: Arc<dyn DeviceIoHost>) -> HostManager {

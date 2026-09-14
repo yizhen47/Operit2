@@ -2,8 +2,11 @@
 
 use std::sync::Arc;
 
-use esp_idf_hal::gpio::{Gpio12, Gpio13, Gpio14, Gpio15, Gpio16, Gpio17, Gpio2, Gpio21, Gpio4};
-use esp_idf_hal::spi::SPI2;
+use esp_idf_hal::gpio::{
+    Gpio12, Gpio13, Gpio14, Gpio15, Gpio16, Gpio17, Gpio2, Gpio21, Gpio25, Gpio32, Gpio33, Gpio36,
+    Gpio39, Gpio4,
+};
+use esp_idf_hal::spi::{SPI2, SPI3};
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{DeviceIoHost, HostResult, RobotFaceHost};
 
@@ -11,16 +14,18 @@ use crate::display::Esp32Ili9341;
 use crate::gpio::Esp32GpioHost;
 use crate::pins::{LED_BLUE_PIN, LED_GREEN_PIN, LED_RED_PIN};
 use crate::robot_face::Esp32RobotFaceHost;
+use crate::touch::{Esp32Touch, TouchPoint};
 use crate::{createRuntimeHostManager, esp32_2432s028HostEnvironment};
 
 /// Owns ESP32-2432S028 Host implementations constructed from board peripherals.
 pub struct Esp32Board {
     gpioHost: Arc<Esp32GpioHost>,
     robotFaceHost: Arc<Esp32RobotFaceHost>,
+    touch: Esp32Touch,
 }
 
 impl Esp32Board {
-    /// Takes the ESP32-2432S028 display and status-LED pins out of ESP-IDF peripherals.
+    /// Takes the ESP32-2432S028 display, touch, and status-LED pins out of ESP-IDF peripherals.
     pub fn new(
         spi2: SPI2<'static>,
         tftDc: Gpio2<'static>,
@@ -32,6 +37,12 @@ impl Esp32Board {
         ledRed: Gpio4<'static>,
         ledGreen: Gpio16<'static>,
         ledBlue: Gpio17<'static>,
+        spi3: SPI3<'static>,
+        touchSclk: Gpio25<'static>,
+        touchMosi: Gpio32<'static>,
+        touchMiso: Gpio39<'static>,
+        touchCs: Gpio33<'static>,
+        touchIrq: Gpio36<'static>,
     ) -> HostResult<Self> {
         let gpioHost = Arc::new(Esp32GpioHost::empty());
         gpioHost.addOutput(LED_RED_PIN, ledRed, true)?;
@@ -47,9 +58,11 @@ impl Esp32Board {
             tftBacklight,
         )?;
         let robotFaceHost = Arc::new(Esp32RobotFaceHost::new(Box::new(display))?);
+        let touch = Esp32Touch::new(spi3, touchSclk, touchMosi, touchMiso, touchCs, touchIrq)?;
         Ok(Self {
             gpioHost,
             robotFaceHost,
+            touch,
         })
     }
 
@@ -61,6 +74,16 @@ impl Esp32Board {
     /// Returns the board-owned robot face host.
     pub fn robotFaceHost(&self) -> Arc<dyn RobotFaceHost> {
         self.robotFaceHost.clone()
+    }
+
+    /// Paints the empty plugin shelf on the board display.
+    pub fn paintPluginShelf(&self) -> HostResult<()> {
+        self.robotFaceHost.paintPluginShelf()
+    }
+
+    /// Reads one calibrated touch sample, if the panel is pressed.
+    pub fn pollTouch(&mut self) -> HostResult<Option<TouchPoint>> {
+        self.touch.poll()
     }
 
     /// Adds ESP32-2432S028 board capabilities to a HostManager.
