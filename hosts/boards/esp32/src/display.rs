@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::sync::{Arc, Mutex};
+
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::gpio::{InputPin, Output, OutputPin, PinDriver};
 use esp_idf_hal::spi::{
@@ -34,6 +36,73 @@ const ILI9341_GAMMASET: u8 = 0x26;
 const ILI9341_POSGAMMA: u8 = 0xE0;
 const ILI9341_NEGGAMMA: u8 = 0xE1;
 
+/// Thread-safe copy of the logical display framebuffer for diagnostics and mirroring.
+///
+/// The face renderer writes to the ILI9341, so keeping this copy lets the firmware
+/// expose the current screen over Wi-Fi without reading the panel back over SPI.
+pub struct Esp32ScreenMirror {
+    width: u16,
+    height: u16,
+    state: Mutex<Esp32ScreenMirrorState>,
+}
+
+/// One ordered rectangle in the compact screen mirror.
+#[derive(Clone, Copy, Debug)]
+pub struct Esp32ScreenMirrorRect {
+    pub rect: FaceRect,
+    pub color: u16,
+}
+
+struct Esp32ScreenMirrorState {
+    background: u16,
+    rects: Vec<Esp32ScreenMirrorRect>,
+}
+
+impl Esp32ScreenMirror {
+    /// Creates a blank RGB565 framebuffer.
+    pub fn new(width: u16, height: u16) -> Self {
+        Self {
+            width,
+            height,
+            state: Mutex::new(Esp32ScreenMirrorState {
+                background: 0,
+                rects: Vec::new(),
+            }),
+        }
+    }
+
+    /// Returns the logical framebuffer dimensions.
+    pub fn dimensions(&self) -> (u16, u16) {
+        (self.width, self.height)
+    }
+
+    /// Reads the compact drawing state while holding its lock for the duration of the read.
+    pub fn withState<F, T>(&self, reader: F) -> T
+    where
+        F: FnOnce(u16, &[Esp32ScreenMirrorRect]) -> T,
+    {
+        match self.state.lock() {
+            Ok(state) => reader(state.background, &state.rects),
+            Err(_) => {
+                reader(0, &[])
+            }
+        }
+    }
+
+    fn fill(&self, color: u16) {
+        if let Ok(mut state) = self.state.lock() {
+            state.background = color;
+            state.rects.clear();
+        }
+    }
+
+    fn fillRect(&self, rect: FaceRect, color: u16) {
+        if let Ok(mut state) = self.state.lock() {
+            state.rects.push(Esp32ScreenMirrorRect { rect, color });
+        }
+    }
+}
+
 /// Drives the ESP32-2432S028 ILI9341 panel over HSPI.
 pub struct Esp32Ili9341 {
     spi: SpiDeviceDriver<'static, SpiDriver<'static>>,
@@ -41,6 +110,7 @@ pub struct Esp32Ili9341 {
     _backlight: PinDriver<'static, Output>,
     width: u16,
     height: u16,
+    mirror: Arc<Esp32ScreenMirror>,
 }
 
 impl Esp32Ili9341 {
@@ -90,6 +160,7 @@ impl Esp32Ili9341 {
             _backlight: backlight,
             width,
             height,
+            mirror: Arc::new(Esp32ScreenMirror::new(width, height)),
         };
         display.initialize()?;
         display
@@ -97,6 +168,11 @@ impl Esp32Ili9341 {
             .set_high()
             .map_err(|error| HostError::new(error.to_string()))?;
         Ok(display)
+    }
+
+    /// Returns the framebuffer mirror shared with the firmware web server.
+    pub fn screenMirror(&self) -> Arc<Esp32ScreenMirror> {
+        Arc::clone(&self.mirror)
     }
 
     /// Sends the ILI9341 power-up sequence and selects the firmware rotation.
@@ -113,7 +189,10 @@ impl Esp32Ili9341 {
         self.writeCommand(ILI9341_PWCTRL2, &[0x10])?;
         self.writeCommand(ILI9341_VMCTRL1, &[0x3E, 0x28])?;
         self.writeCommand(ILI9341_VMCTRL2, &[0x86])?;
-        self.writeCommand(ILI9341_MADCTL, &[madctlForRotation(DISPLAY_ROTATION_DEGREES)])?;
+        self.writeCommand(
+            ILI9341_MADCTL,
+            &[madctlForRotation(DISPLAY_ROTATION_DEGREES)],
+        )?;
         self.writeCommand(ILI9341_PIXFMT, &[0x55])?;
         self.writeCommand(ILI9341_FRMCTR1, &[0x00, 0x18])?;
         self.writeCommand(ILI9341_DISCTRL, &[0x08, 0x82, 0x27])?;
@@ -121,11 +200,17 @@ impl Esp32Ili9341 {
         self.writeCommand(ILI9341_GAMMASET, &[0x01])?;
         self.writeCommand(
             ILI9341_POSGAMMA,
-            &[0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09, 0x00],
+            &[
+                0x0F, 0x31, 0x2B, 0x0C, 0x0E, 0x08, 0x4E, 0xF1, 0x37, 0x07, 0x10, 0x03, 0x0E, 0x09,
+                0x00,
+            ],
         )?;
         self.writeCommand(
             ILI9341_NEGGAMMA,
-            &[0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36, 0x0F],
+            &[
+                0x00, 0x0E, 0x14, 0x03, 0x11, 0x07, 0x31, 0xC1, 0x48, 0x08, 0x0F, 0x0C, 0x31, 0x36,
+                0x0F,
+            ],
         )?;
         self.writeCommand(ILI9341_SLPOUT, &[])?;
         FreeRtos::delay_ms(120);
@@ -198,6 +283,7 @@ impl Esp32Ili9341 {
             chunk.copy_from_slice(&pixel);
         }
         let mut remaining = count;
+        let mut burstsSinceYield = 0u8;
         while remaining > 0 {
             let pixels = remaining.min(64);
             let bytes = (pixels * 2) as usize;
@@ -205,6 +291,11 @@ impl Esp32Ili9341 {
                 .write(&burst[..bytes])
                 .map_err(|error| HostError::new(error.to_string()))?;
             remaining -= pixels;
+            burstsSinceYield = burstsSinceYield.saturating_add(1);
+            if burstsSinceYield >= 8 && remaining > 0 {
+                FreeRtos::delay_ms(1);
+                burstsSinceYield = 0;
+            }
         }
         Ok(())
     }
@@ -223,7 +314,9 @@ impl FaceCanvas for Esp32Ili9341 {
         if self.width == 0 || self.height == 0 {
             return Ok(());
         }
-        self.fillWindow(0, 0, self.width - 1, self.height - 1, color)
+        self.fillWindow(0, 0, self.width - 1, self.height - 1, color)?;
+        self.mirror.fill(color);
+        Ok(())
     }
 
     fn fillRect(&mut self, rect: FaceRect, color: u16) -> HostResult<()> {
@@ -243,6 +336,8 @@ impl FaceCanvas for Esp32Ili9341 {
         if rect.x > x1 || rect.y > y1 {
             return Ok(());
         }
-        self.fillWindow(rect.x, rect.y, x1, y1, color)
+        self.fillWindow(rect.x, rect.y, x1, y1, color)?;
+        self.mirror.fillRect(rect, color);
+        Ok(())
     }
 }

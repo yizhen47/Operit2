@@ -12,9 +12,7 @@ impl Esp32FirmwareConfig {
     /// Reads firmware settings from `OPERIT_WIFI_SSID` and `OPERIT_WIFI_PASSWORD`.
     pub fn fromEnv() -> Self {
         Self {
-            wifiSsid: option_env!("OPERIT_WIFI_SSID")
-                .unwrap_or("")
-                .to_string(),
+            wifiSsid: option_env!("OPERIT_WIFI_SSID").unwrap_or("").to_string(),
             wifiPassword: option_env!("OPERIT_WIFI_PASSWORD")
                 .unwrap_or("")
                 .to_string(),

@@ -26,6 +26,8 @@ pub use board::Esp32Board;
 #[cfg(target_os = "espidf")]
 pub use display::Esp32Ili9341;
 #[cfg(target_os = "espidf")]
+pub use display::{Esp32ScreenMirror, Esp32ScreenMirrorRect};
+#[cfg(target_os = "espidf")]
 pub use gpio::Esp32GpioHost;
 #[cfg(target_os = "espidf")]
 pub use touch::Esp32Touch;
@@ -35,11 +37,11 @@ pub use face::{
     SUPPORTED_EXPRESSIONS,
 };
 pub use pins::{
-    logicalDisplaySize, madctlForRotation, DISPLAY_ROTATION_DEGREES, ESP32_2432S028_BOARD_DISPLAY_NAME,
-    ESP32_2432S028_BOARD_ID, LED_BLUE_PIN, LED_GREEN_PIN, LED_RED_PIN, PANEL_NATIVE_HEIGHT,
-    PANEL_NATIVE_WIDTH, SD_CS_PIN, TFT_BACKLIGHT_PIN, TFT_CS_PIN, TFT_DC_PIN, TFT_MISO_PIN,
-    TFT_MOSI_PIN, TFT_SCLK_PIN, TOUCH_CS_PIN, TOUCH_INT_PIN, TOUCH_MISO_PIN, TOUCH_MOSI_PIN,
-    TOUCH_SCLK_PIN,
+    logicalDisplaySize, madctlForRotation, DISPLAY_ROTATION_DEGREES,
+    ESP32_2432S028_BOARD_DISPLAY_NAME, ESP32_2432S028_BOARD_ID, LED_BLUE_PIN, LED_GREEN_PIN,
+    LED_RED_PIN, PANEL_NATIVE_HEIGHT, PANEL_NATIVE_WIDTH, SD_CS_PIN, TFT_BACKLIGHT_PIN, TFT_CS_PIN,
+    TFT_DC_PIN, TFT_MISO_PIN, TFT_MOSI_PIN, TFT_SCLK_PIN, TOUCH_CS_PIN, TOUCH_INT_PIN,
+    TOUCH_MISO_PIN, TOUCH_MOSI_PIN, TOUCH_SCLK_PIN,
 };
 pub use robot_face::{Esp32RobotFaceHost, FaceCanvas, MemoryFaceCanvas};
 pub use shell::{paintPluginShelf, PLUGIN_SLOT_COUNT};

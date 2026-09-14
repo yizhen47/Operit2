@@ -10,7 +10,7 @@ use esp_idf_hal::spi::{SPI2, SPI3};
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{DeviceIoHost, HostResult, RobotFaceHost};
 
-use crate::display::Esp32Ili9341;
+use crate::display::{Esp32Ili9341, Esp32ScreenMirror};
 use crate::gpio::Esp32GpioHost;
 use crate::pins::{LED_BLUE_PIN, LED_GREEN_PIN, LED_RED_PIN};
 use crate::robot_face::Esp32RobotFaceHost;
@@ -21,6 +21,7 @@ use crate::{createRuntimeHostManager, esp32_2432s028HostEnvironment};
 pub struct Esp32Board {
     gpioHost: Arc<Esp32GpioHost>,
     robotFaceHost: Arc<Esp32RobotFaceHost<Esp32Ili9341>>,
+    screenMirror: Arc<Esp32ScreenMirror>,
     touch: Esp32Touch,
 }
 
@@ -51,16 +52,10 @@ impl Esp32Board {
         gpioHost.addOutput(LED_BLUE_PIN, ledBlue, true)?;
         log::info!("esp32 board: status LEDs ready");
         log::info!("esp32 board: initializing TFT SPI");
-        let display = Esp32Ili9341::new(
-            spi2,
-            tftSclk,
-            tftMosi,
-            tftMiso,
-            tftCs,
-            tftDc,
-            tftBacklight,
-        )?;
+        let display =
+            Esp32Ili9341::new(spi2, tftSclk, tftMosi, tftMiso, tftCs, tftDc, tftBacklight)?;
         log::info!("esp32 board: TFT initialized");
+        let screenMirror = display.screenMirror();
         log::info!("esp32 board: creating face host");
         let robotFaceHost = Arc::new(Esp32RobotFaceHost::new(display)?);
         log::info!("esp32 board: face host ready");
@@ -70,8 +65,14 @@ impl Esp32Board {
         Ok(Self {
             gpioHost,
             robotFaceHost,
+            screenMirror,
             touch,
         })
+    }
+
+    /// Returns the board-owned framebuffer mirror used by the Wi-Fi preview.
+    pub fn screenMirror(&self) -> Arc<Esp32ScreenMirror> {
+        Arc::clone(&self.screenMirror)
     }
 
     /// Returns the board-owned digital I/O host.

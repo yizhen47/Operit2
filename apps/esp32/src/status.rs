@@ -62,7 +62,11 @@ impl FirmwareStatus {
                 .lock()
                 .map(|value| value.clone())
                 .unwrap_or_default(),
-            ipv4: self.ipv4.lock().map(|value| value.clone()).unwrap_or_default(),
+            ipv4: self
+                .ipv4
+                .lock()
+                .map(|value| value.clone())
+                .unwrap_or_default(),
             wifiSsid: self
                 .wifiSsid
                 .lock()
@@ -94,6 +98,7 @@ pub fn renderHomePage(snapshot: &FirmwareStatusSnapshot) -> String {
 <p>Expression: {expression}</p>\
 <p>Wi-Fi: {ssid}</p>\
 <p>IP: {ip}</p>\
+<p><a href=\"/screen\">打开屏幕实时预览</a></p>\
 <p>This node is an Edge capability device, not a full CoreNode.</p>\
 </body>\
 </html>",

@@ -79,9 +79,7 @@ impl SwipeTracker {
                 None
             }
             None => match (self.origin.take(), self.last.take()) {
-                (Some(origin), Some(last)) => {
-                    gestureFromSwipe(origin.0, origin.1, last.0, last.1)
-                }
+                (Some(origin), Some(last)) => gestureFromSwipe(origin.0, origin.1, last.0, last.1),
                 _ => None,
             },
         }

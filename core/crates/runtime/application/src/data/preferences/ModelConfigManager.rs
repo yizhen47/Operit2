@@ -10,10 +10,10 @@ use operit_local_models::LocalModelManifest::LocalModelKind;
 use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
 use operit_model::ModelCatalog::ModelCatalog;
 use operit_model::ModelConfigData::{
-    ApiProviderType, AvailableProviderModel, AvailableProviderModelSource, ModelCapabilities,
-    ModelConfigDefaults, ModelContextSpec, ModelProfile, ModelRequestSpec, ModelSummarySettings,
-    ProviderModelSummary, ProviderProfile, ResolvedModelConfig, default_deepseek_provider,
-    local_model_provider,
+    default_deepseek_provider, local_model_provider, ApiProviderType, AvailableProviderModel,
+    AvailableProviderModelSource, ModelCapabilities, ModelConfigDefaults, ModelContextSpec,
+    ModelProfile, ModelRequestSpec, ModelSummarySettings, ProviderModelSummary, ProviderProfile,
+    ResolvedModelConfig,
 };
 use operit_model::ModelParameter::ModelParameter;
 use operit_providers::chat::llmprovider::ModelConfigConnectionTester::{
@@ -25,7 +25,7 @@ use operit_providers::chat::llmprovider::ThinkingConfiguration::{
 };
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_store::PreferencesDataStore::{
-    Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError, stringPreferencesKey,
+    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -1123,7 +1123,7 @@ mod tests {
     use operit_model::ModelConfigData::ModelConfigDefaults;
     use operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost;
     use operit_util::RuntimeStorageLayout::WORKSPACE_DIR_PATH;
-    use operit_util::RuntimeStoreRoot::{RuntimeStoreRootConfig, setDefaultRuntimeStoreRootConfig};
+    use operit_util::RuntimeStoreRoot::{setDefaultRuntimeStoreRootConfig, RuntimeStoreRootConfig};
     use std::fs;
     use std::path::{Component, Path, PathBuf};
     use std::sync::Arc;
@@ -1148,11 +1148,9 @@ mod tests {
         runtime.block_on(async {
             let manager = ModelConfigManager::new(root.clone());
             let providers = manager.getProviderProfiles().expect("provider profiles");
-            assert!(
-                providers
-                    .iter()
-                    .any(|provider| provider.id == "LOCAL_MODEL")
-            );
+            assert!(providers
+                .iter()
+                .any(|provider| provider.id == "LOCAL_MODEL"));
         });
         fs::remove_dir_all(root).expect("remove model config test root");
     }

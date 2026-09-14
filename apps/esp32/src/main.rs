@@ -52,8 +52,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         unsafe fn drop(_: *const ()) {}
 
         fn noopRawWaker() -> RawWaker {
-            static VTABLE: RawWakerVTable =
-                RawWakerVTable::new(clone, wake, wakeByRef, drop);
+            static VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wakeByRef, drop);
             RawWaker::new(std::ptr::null(), &VTABLE)
         }
 
@@ -103,38 +102,33 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         peripherals.pins.gpio36,
     )?;
     let hostManager = board.installIntoHostManager();
+    let screenMirror = board.screenMirror();
     let edgeNode = EdgeNode::new(createDeviceIoService(hostManager.clone()))
         .withRobotFaceService(createRobotFaceService(hostManager));
     let edgeProxy = EdgeProxy::new(edgeNode);
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
     let mut app = Esp32App::new(edgeProxy, Arc::clone(&status));
-    blockOn(app.setExpression("booting"))
-        .map_err(edgeError)?;
+    blockOn(app.setExpression("booting")).map_err(edgeError)?;
     let _wifi = if config.hasWifi() {
         match Esp32Wifi::connect(modem, &config) {
             Ok(wifi) => {
                 let ip = wifi.ipv4()?;
                 status.setWifiSsid(config.wifiSsid.clone());
                 status.setIpv4(ip.to_string());
-                blockOn(app.setExpression("online"))
-                    .map_err(edgeError)?;
-                blockOn(app.setDigitalOutput(LED_GREEN_PIN, true))
-                    .map_err(edgeError)?;
+                blockOn(app.setExpression("online")).map_err(edgeError)?;
+                blockOn(app.setDigitalOutput(LED_GREEN_PIN, true)).map_err(edgeError)?;
                 log::info!("operit-esp32 online at http://{ip}/");
                 Some(wifi)
             }
             Err(error) => {
-                blockOn(app.setExpression("error"))
-                    .map_err(edgeError)?;
-                blockOn(app.setDigitalOutput(LED_RED_PIN, true))
-                    .map_err(edgeError)?;
+                blockOn(app.setExpression("error")).map_err(edgeError)?;
+                blockOn(app.setDigitalOutput(LED_RED_PIN, true)).map_err(edgeError)?;
                 log::error!("operit-esp32 wifi failed: {}", error.message);
                 None
             }
         }
     } else {
-        blockOn(app.setExpression("online"))
-            .map_err(edgeError)?;
+        blockOn(app.setExpression("online")).map_err(edgeError)?;
         log::warn!(
             "operit-esp32 starting without Wi-Fi; set OPERIT_WIFI_SSID to enable the home page"
         );
@@ -143,7 +137,11 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     let _home = if status.snapshot().ipv4.is_empty() {
         None
     } else {
-        Some(Esp32WebHome::start(Arc::clone(&status), config.httpPort)?)
+        Some(Esp32WebHome::start(
+            Arc::clone(&status),
+            screenMirror,
+            config.httpPort,
+        )?)
     };
 
     use crate::ui::{HomeSurface, SwipeTracker};
@@ -166,8 +164,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                     }
                     HomeSurface::Face => {
                         let expression = status.snapshot().expression;
-                        blockOn(app.setExpression(&expression))
-                            .map_err(edgeError)?;
+                        blockOn(app.setExpression(&expression)).map_err(edgeError)?;
                         log::info!("operit-esp32 returned to face");
                     }
                 }

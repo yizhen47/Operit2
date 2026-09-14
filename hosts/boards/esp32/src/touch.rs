@@ -15,20 +15,68 @@ pub fn mapRawToLogical(rawX: u16, rawY: u16) -> (u16, u16) {
     let (width, height) = logicalDisplaySize(DISPLAY_ROTATION_DEGREES);
     match DISPLAY_ROTATION_DEGREES % 360 {
         90 => (
-            mapLinear(rawY, TOUCH_RAW_MIN, TOUCH_RAW_MAX, 0, width.saturating_sub(1)),
-            mapLinear(rawX, TOUCH_RAW_MAX, TOUCH_RAW_MIN, 0, height.saturating_sub(1)),
+            mapLinear(
+                rawY,
+                TOUCH_RAW_MIN,
+                TOUCH_RAW_MAX,
+                0,
+                width.saturating_sub(1),
+            ),
+            mapLinear(
+                rawX,
+                TOUCH_RAW_MAX,
+                TOUCH_RAW_MIN,
+                0,
+                height.saturating_sub(1),
+            ),
         ),
         180 => (
-            mapLinear(rawX, TOUCH_RAW_MAX, TOUCH_RAW_MIN, 0, width.saturating_sub(1)),
-            mapLinear(rawY, TOUCH_RAW_MAX, TOUCH_RAW_MIN, 0, height.saturating_sub(1)),
+            mapLinear(
+                rawX,
+                TOUCH_RAW_MAX,
+                TOUCH_RAW_MIN,
+                0,
+                width.saturating_sub(1),
+            ),
+            mapLinear(
+                rawY,
+                TOUCH_RAW_MAX,
+                TOUCH_RAW_MIN,
+                0,
+                height.saturating_sub(1),
+            ),
         ),
         270 => (
-            mapLinear(rawY, TOUCH_RAW_MAX, TOUCH_RAW_MIN, 0, width.saturating_sub(1)),
-            mapLinear(rawX, TOUCH_RAW_MAX, TOUCH_RAW_MIN, 0, height.saturating_sub(1)),
+            mapLinear(
+                rawY,
+                TOUCH_RAW_MAX,
+                TOUCH_RAW_MIN,
+                0,
+                width.saturating_sub(1),
+            ),
+            mapLinear(
+                rawX,
+                TOUCH_RAW_MAX,
+                TOUCH_RAW_MIN,
+                0,
+                height.saturating_sub(1),
+            ),
         ),
         _ => (
-            mapLinear(rawX, TOUCH_RAW_MIN, TOUCH_RAW_MAX, 0, PANEL_NATIVE_HEIGHT.saturating_sub(1)),
-            mapLinear(rawY, TOUCH_RAW_MIN, TOUCH_RAW_MAX, 0, PANEL_NATIVE_WIDTH.saturating_sub(1)),
+            mapLinear(
+                rawX,
+                TOUCH_RAW_MIN,
+                TOUCH_RAW_MAX,
+                0,
+                PANEL_NATIVE_HEIGHT.saturating_sub(1),
+            ),
+            mapLinear(
+                rawY,
+                TOUCH_RAW_MIN,
+                TOUCH_RAW_MAX,
+                0,
+                PANEL_NATIVE_WIDTH.saturating_sub(1),
+            ),
         ),
     }
 }
@@ -106,12 +154,9 @@ mod driver {
                 &SpiDriverConfig::new().dma(Dma::Disabled),
             )
             .map_err(|error| HostError::new(error.to_string()))?;
-            let spi = SpiDeviceDriver::new(
-                driver,
-                Some(cs),
-                &SpiConfig::new().baudrate(2.MHz().into()),
-            )
-            .map_err(|error| HostError::new(error.to_string()))?;
+            let spi =
+                SpiDeviceDriver::new(driver, Some(cs), &SpiConfig::new().baudrate(2.MHz().into()))
+                    .map_err(|error| HostError::new(error.to_string()))?;
             let irq = PinDriver::input(irq, Pull::Floating)
                 .map_err(|error| HostError::new(error.to_string()))?;
             Ok(Self { spi, irq })
