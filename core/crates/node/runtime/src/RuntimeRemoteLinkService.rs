@@ -6,14 +6,24 @@ use operit_access_runtime::{
         activePeerNodeIds, disconnectPeerLink, isPeerLinkActive, kickPeerLink,
         subscribePeerLinkChanges,
     },
-    LinkAccessStore, LinkTransportPreference, PairedRemoteSession, PairedRemoteSessionRecord,
-    PendingOutboundPairingRecord, RemoteDeviceInfo, RemoteLinkClient,
+    LinkAccessStore, LinkTransportPreference, PairedEdgeSessionRecord, PairedRemoteSession,
+    PairedRemoteSessionRecord, PendingOutboundPairingRecord, RemoteDeviceInfo, RemoteLinkClient,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use operit_edge_transport::{
+    finishPairAsClient, linkTokenHash, startPairAsClient, AuthenticatedLinkChannel,
+    EdgeLinkClient, EdgePairStartState, EdgeSession, LinkChannel,
 };
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{
-    fromCoreValue, toCoreValue, CoreCallRequest, CoreValue, CORE_INTERNAL_ROUTE_OBJECT_ID,
+    fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse, CoreLinkSharedClient,
+    CoreValue, LinkDeviceInfo, CORE_INTERNAL_ROUTE_OBJECT_ID,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use base64::engine::general_purpose::STANDARD as BASE64;
+#[cfg(not(target_arch = "wasm32"))]
+use base64::Engine;
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
 use operit_store::CoreSpaceStore::{CoreSpace, CoreSpaceDeviceProfile, CoreSpaceStore};
 use operit_store::NetworkControlStore::{
@@ -28,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, Mutex as AsyncMutex};
 
 use crate::{
     CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter},
@@ -64,6 +74,55 @@ pub struct RuntimeRemotePairStartResult {
     pub coreDeviceId: String,
     pub coreDeviceInfo: RemoteDeviceInfo,
     pub coreUserName: String,
+}
+
+/// Reports the Edge identity returned by an outbound lightweight pairing.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RuntimeEdgePairStartResult {
+    pub pairingId: String,
+    pub pairingServiceVersion: u16,
+    pub edgeDeviceId: String,
+    pub edgeDeviceInfo: RemoteDeviceInfo,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct PendingEdgePairing {
+    endpoint: String,
+    state: EdgePairStartState,
+    channel: Arc<dyn LinkChannel>,
+}
+
+/// Opens one Edge carrier from the user-facing endpoint string.
+///
+/// TCP remains the default (`192.168.1.20:8765`). USB/UART endpoints use
+/// `serial://COM27` or `serial://COM27?baud=115200` and share the exact same
+/// Link pairing and authenticated frame layer.
+#[cfg(not(target_arch = "wasm32"))]
+async fn connectEdgeChannel(
+    endpoint: &str,
+) -> Result<Arc<dyn LinkChannel>, String> {
+    if let Some(serialEndpoint) = endpoint.strip_prefix("serial://") {
+        let (port, query) = serialEndpoint.split_once('?').unwrap_or((serialEndpoint, ""));
+        let port = port.trim_start_matches('/');
+        if port.trim().is_empty() {
+            return Err("Edge serial endpoint must contain a port name".to_string());
+        }
+        let baudRate = query
+            .split('&')
+            .find_map(|part| part.strip_prefix("baud="))
+            .map(|value| {
+                value
+                    .parse::<u32>()
+                    .map_err(|error| format!("invalid Edge serial baud rate: {error}"))
+            })
+            .transpose()?
+            .unwrap_or(115_200);
+        let channel = operit_edge_transport::serial::SerialLinkChannel::open(port, baudRate)?;
+        return Ok(channel);
+    }
+    let channel = operit_edge_transport::tcp::TcpLinkChannel::connect(endpoint).await?;
+    Ok(channel)
 }
 
 /// Describes a Link-enabled runtime discovered by the local runtime.
@@ -148,6 +207,10 @@ pub struct RuntimeRemoteLinkService {
     linkAccessStore: LinkAccessStore,
     spaceStore: CoreSpaceStore,
     networkControlStore: NetworkControlStore,
+    #[cfg(not(target_arch = "wasm32"))]
+    edgeClients: Arc<AsyncMutex<BTreeMap<String, Arc<EdgeLinkClient>>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pendingEdgePairings: Arc<AsyncMutex<BTreeMap<String, PendingEdgePairing>>>,
 }
 
 impl RuntimeRemoteLinkService {
@@ -181,6 +244,10 @@ impl RuntimeRemoteLinkService {
             linkAccessStore,
             spaceStore,
             networkControlStore,
+            #[cfg(not(target_arch = "wasm32"))]
+            edgeClients: Arc::new(AsyncMutex::new(BTreeMap::new())),
+            #[cfg(not(target_arch = "wasm32"))]
+            pendingEdgePairings: Arc::new(AsyncMutex::new(BTreeMap::new())),
         }
     }
 
@@ -1006,6 +1073,177 @@ impl RuntimeRemoteLinkService {
         self.linkAccessStore
             .removePendingOutboundPairing(&pairingId)?;
         Ok(record)
+    }
+
+    /// Starts the standard Link pairing exchange with a lightweight Edge.
+    /// `tokenHash` is the SHA-256/base64 hash of the Edge token, matching the
+    /// normal Link Access pairing contract.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    pub async fn startEdgePairing(
+        &self,
+        endpoint: String,
+        tokenHash: String,
+        clientDeviceInfo: RemoteDeviceInfo,
+    ) -> Result<RuntimeEdgePairStartResult, String> {
+        if endpoint.trim().is_empty() {
+            return Err("Edge endpoint must not be empty".to_string());
+        }
+        if tokenHash.trim().is_empty() {
+            return Err("Edge token hash must not be empty".to_string());
+        }
+        let identity = self
+            .linkAccessStore
+            .initializeIdentity(clientDeviceInfo.clone())?;
+        let channel = connectEdgeChannel(&endpoint).await?;
+        let state = startPairAsClient(
+            channel.clone(),
+            tokenHash,
+            identity.deviceId,
+            LinkDeviceInfo {
+                platform: identity.deviceInfo.platform,
+                model: identity.deviceInfo.model,
+            },
+        )
+        .await?;
+        let result = RuntimeEdgePairStartResult {
+            pairingId: state.pairingId.clone(),
+            pairingServiceVersion: operit_edge_transport::EDGE_PAIRING_SERVICE_VERSION,
+            edgeDeviceId: state.edgeDeviceId.clone(),
+            edgeDeviceInfo: RemoteDeviceInfo {
+                platform: state.edgeDeviceInfo.platform.clone(),
+                model: state.edgeDeviceInfo.model.clone(),
+            },
+        };
+        self.pendingEdgePairings.lock().await.insert(
+            state.pairingId.clone(),
+            PendingEdgePairing {
+                endpoint,
+                state,
+                channel,
+            },
+        );
+        Ok(result)
+    }
+
+    /// Convenience pairing entry point for callers that still hold the raw
+    /// Edge token rather than its Link hash.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    pub async fn startEdgePairingWithToken(
+        &self,
+        endpoint: String,
+        token: String,
+        clientDeviceInfo: RemoteDeviceInfo,
+    ) -> Result<RuntimeEdgePairStartResult, String> {
+        self.startEdgePairing(endpoint, linkTokenHash(&token), clientDeviceInfo)
+            .await
+    }
+
+    /// Completes an Edge pairing after the code displayed by the Edge has
+    /// been entered and keeps the authenticated Link client ready for calls.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    pub async fn finishEdgePairing(
+        &self,
+        pairingId: String,
+        pairingCode: String,
+        name: String,
+    ) -> Result<PairedEdgeSessionRecord, String> {
+        if pairingId.trim().is_empty()
+            || pairingCode.trim().is_empty()
+            || name.trim().is_empty()
+        {
+            return Err("Edge pairing id, code, and session name are required".to_string());
+        }
+        if self.linkAccessStore.edgeSessions()?.contains_key(&name) {
+            return Err(format!("Edge session already exists: {name}"));
+        }
+        let pending = self
+            .pendingEdgePairings
+            .lock()
+            .await
+            .remove(&pairingId)
+            .ok_or_else(|| format!("pending Edge pairing does not exist: {pairingId}"))?;
+        let edgeDeviceInfo = RemoteDeviceInfo {
+            platform: pending.state.edgeDeviceInfo.platform.clone(),
+            model: pending.state.edgeDeviceInfo.model.clone(),
+        };
+        let session = finishPairAsClient(
+            pending.channel.clone(),
+            pending.state,
+            pairingCode,
+        )
+        .await?;
+        let record = PairedEdgeSessionRecord {
+            endpoint: pending.endpoint,
+            sessionId: session.sessionId.clone(),
+            deviceId: session.deviceId.clone(),
+            edgeDeviceId: session.peerDeviceId.clone(),
+            edgeDeviceInfo,
+            pairingServiceVersion: operit_edge_transport::EDGE_PAIRING_SERVICE_VERSION,
+            sessionSecret: BASE64.encode(&session.sessionSecret),
+        };
+        self.linkAccessStore
+            .saveEdgeSession(name.clone(), record.clone())?;
+        let authenticated = AuthenticatedLinkChannel::new(pending.channel, session);
+        self.edgeClients
+            .lock()
+            .await
+            .insert(name, Arc::new(EdgeLinkClient::new(authenticated)));
+        Ok(record)
+    }
+
+    /// Executes one standard Link call against a paired lightweight Edge.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    pub async fn callEdge(
+        &self,
+        name: String,
+        request: CoreCallRequest,
+    ) -> Result<CoreCallResponse, String> {
+        let client = self.edgeClient(&name).await?;
+        Ok(client.call(request).await)
+    }
+
+    /// Lists the completed lightweight Edge sessions known by this Core.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[allow(non_snake_case)]
+    pub fn edgeSessionsSnapshot(&self) -> Result<BTreeMap<String, PairedEdgeSessionRecord>, String> {
+        self.linkAccessStore.edgeSessions()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    async fn edgeClient(&self, name: &str) -> Result<Arc<EdgeLinkClient>, String> {
+        if let Some(client) = self.edgeClients.lock().await.get(name).cloned() {
+            if client.isConnected() {
+                return Ok(client);
+            }
+            self.edgeClients.lock().await.remove(name);
+        }
+        let record = self
+            .linkAccessStore
+            .edgeSessions()?
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("Edge session does not exist: {name}"))?;
+        let secret = BASE64
+            .decode(record.sessionSecret.as_bytes())
+            .map_err(|error| error.to_string())?;
+        let session = EdgeSession {
+            sessionId: record.sessionId,
+            deviceId: record.deviceId,
+            peerDeviceId: record.edgeDeviceId,
+            sessionSecret: secret,
+        };
+        let channel = connectEdgeChannel(&record.endpoint).await?;
+        let authenticated = AuthenticatedLinkChannel::new(channel, session);
+        let client = Arc::new(EdgeLinkClient::new(authenticated));
+        self.edgeClients
+            .lock()
+            .await
+            .insert(name.to_string(), client.clone());
+        Ok(client)
     }
 
     /// Bootstraps an outbound pairing from a Web Access URL token.

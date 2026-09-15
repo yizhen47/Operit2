@@ -613,6 +613,99 @@ pub struct CoreCallResponse {
     pub result: Result<CoreValue, CoreLinkError>,
 }
 
+/// Carries one lightweight-node operation through a Link carrier.
+///
+/// This is intentionally defined in `operit-link`, rather than in the Edge
+/// crates, so normal Core nodes and lightweight Edge nodes share the same
+/// request/value/error model.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LinkFrame {
+    pub messageId: String,
+    pub payload: LinkFramePayload,
+}
+
+/// Minimal device information shared by Link pairing without depending on a
+/// full runtime's Access types.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkDeviceInfo {
+    pub platform: String,
+    pub model: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkPairStartRequest {
+    pub pairingServiceVersion: u16,
+    pub tokenHash: String,
+    pub clientDeviceId: String,
+    pub clientDeviceInfo: LinkDeviceInfo,
+    pub clientPublicKey: String,
+    pub clientNonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkPairStartResponse {
+    pub pairingId: String,
+    pub pairingServiceVersion: u16,
+    pub edgeDeviceId: String,
+    pub edgeDeviceInfo: LinkDeviceInfo,
+    pub edgePublicKey: String,
+    pub serverNonce: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkPairFinishRequest {
+    pub pairingId: String,
+    pub pairingCode: String,
+    pub clientProof: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LinkPairFinishResponse {
+    pub sessionId: String,
+    pub pairingServiceVersion: u16,
+    pub coreProof: String,
+}
+
+/// Defines the request/response subset needed by lightweight Edge nodes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body")]
+pub enum LinkFramePayload {
+    PairStart(LinkPairStartRequest),
+    PairStartResponse(LinkPairStartResponse),
+    PairFinish(LinkPairFinishRequest),
+    PairFinishResponse(LinkPairFinishResponse),
+    Authenticated {
+        sessionId: String,
+        deviceId: String,
+        signature: String,
+        #[serde(with = "serde_bytes")]
+        payloadBytes: Vec<u8>,
+    },
+    Call(CoreCallRequest),
+    CallResponse(CoreCallResponse),
+    WatchSnapshot(CoreWatchRequest),
+    WatchSnapshotResponse(Result<CoreEvent, CoreLinkError>),
+    WatchOpen {
+        subscriptionId: String,
+        request: CoreWatchRequest,
+    },
+    WatchEvent {
+        subscriptionId: String,
+        event: CoreEvent,
+    },
+    WatchClose {
+        subscriptionId: String,
+    },
+    Operation(Result<(), CoreLinkError>),
+    Heartbeat {
+        sequence: u64,
+    },
+    Close {
+        code: String,
+        message: String,
+    },
+}
+
 impl CoreCallResponse {
     /// Creates a successful call response.
     pub fn ok(requestId: CoreRequestId, value: CoreValue) -> Self {

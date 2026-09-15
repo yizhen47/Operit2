@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 pub use operit_edge_contract::{
     EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, EDGE_ROBOT_FACE_OBJECT_ID,
-    EDGE_ROBOT_FACE_STATE_PROPERTY,
+    EDGE_ROBOT_FACE_STATE_PROPERTY, EDGE_SCREEN_OBJECT_ID, EDGE_SCREEN_STATE_PROPERTY,
 };
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::RobotFaceExpressionRequest;
@@ -13,7 +13,7 @@ use operit_link::{
     toCoreValue, CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind, CoreEventStream,
     CoreLinkError, CoreLinkSharedClient, CoreValue, CoreWatchRequest,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub mod service;
 
@@ -23,10 +23,47 @@ pub use service::{
     RobotFaceStateStream,
 };
 
+/// One complete display snapshot transported through the standard Link value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EdgeScreenSnapshot {
+    pub width: u16,
+    pub height: u16,
+    pub format: String,
+    pub pixels: Vec<u8>,
+}
+
+/// A generic input event accepted by an Edge display service.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EdgeScreenInputRequest {
+    pub action: String,
+    pub x: u16,
+    pub y: u16,
+    pub endX: Option<u16>,
+    pub endY: Option<u16>,
+}
+
+/// Reports whether a display input event was accepted by the Edge service.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EdgeScreenInputState {
+    pub accepted: bool,
+    pub action: String,
+}
+
+/// Defines the minimal display operations shared by small embedded targets.
+pub trait ScreenService: Send + Sync {
+    fn getScreenSnapshot(&self) -> Result<EdgeScreenSnapshot, EdgeServiceError>;
+    fn sendScreenInput(
+        &self,
+        request: EdgeScreenInputRequest,
+    ) -> Result<EdgeScreenInputState, EdgeServiceError>;
+}
+
 /// Owns the lightweight device-side Core services for one Edge Node.
+#[derive(Clone)]
 pub struct EdgeNode {
     deviceIoService: Arc<dyn DeviceIoService>,
     robotFaceService: Option<Arc<dyn RobotFaceService>>,
+    screenService: Option<Arc<dyn ScreenService>>,
 }
 
 impl EdgeNode {
@@ -35,6 +72,7 @@ impl EdgeNode {
         Self {
             deviceIoService,
             robotFaceService: None,
+            screenService: None,
         }
     }
 
@@ -49,8 +87,14 @@ impl EdgeNode {
         self
     }
 
+    /// Registers the optional generic display capability.
+    pub fn withScreenService(mut self, screenService: Arc<dyn ScreenService>) -> Self {
+        self.screenService = Some(screenService);
+        self
+    }
+
     /// Dispatches one Link call to the registered Edge Service.
-    pub(crate) fn dispatchCall(&self, request: CoreCallRequest) -> CoreCallResponse {
+    pub fn dispatchCall(&self, request: CoreCallRequest) -> CoreCallResponse {
         let requestId = request.requestId.clone();
         let result = match request.targetObjectId {
             EDGE_DEVICE_IO_OBJECT_ID => match request.methodName.as_str() {
@@ -63,6 +107,11 @@ impl EdgeNode {
                 "getExpression" => self.getExpression(),
                 _ => Err(CoreLinkError::methodNotFound(&request.registryKey())),
             },
+            EDGE_SCREEN_OBJECT_ID => match request.methodName.as_str() {
+                "getScreenSnapshot" => self.getScreenSnapshot(),
+                "sendScreenInput" => self.sendScreenInput(request.args),
+                _ => Err(CoreLinkError::methodNotFound(&request.registryKey())),
+            },
             _ => Err(CoreLinkError::methodNotFound(&request.registryKey())),
         };
         match result {
@@ -72,7 +121,7 @@ impl EdgeNode {
     }
 
     /// Reads one Link watch snapshot from the registered Edge Service.
-    pub(crate) fn dispatchWatchSnapshot(
+    pub fn dispatchWatchSnapshot(
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEvent, CoreLinkError> {
@@ -108,12 +157,13 @@ impl EdgeNode {
                         .map_err(|error| CoreLinkError::internal(error.to_string()))?,
                 })
             }
+            EDGE_SCREEN_OBJECT_ID => Err(CoreLinkError::watchNotFound(&request.registryKey())),
             _ => Err(CoreLinkError::watchNotFound(&request.registryKey())),
         }
     }
 
     /// Opens one Link watch backed by a typed Edge Service state stream.
-    pub(crate) fn dispatchWatch(
+    pub fn dispatchWatch(
         &self,
         request: CoreWatchRequest,
     ) -> Result<CoreEventStream, CoreLinkError> {
@@ -276,6 +326,23 @@ impl EdgeNode {
             .getExpression()
             .map_err(serviceError)?;
         encodeValue(state)
+    }
+
+    fn getScreenSnapshot(&self) -> Result<CoreValue, CoreLinkError> {
+        let service = self
+            .screenService
+            .as_ref()
+            .ok_or_else(|| CoreLinkError::methodNotFound("screen.getScreenSnapshot"))?;
+        encodeValue(service.getScreenSnapshot().map_err(serviceError)?)
+    }
+
+    fn sendScreenInput(&self, args: CoreValue) -> Result<CoreValue, CoreLinkError> {
+        let service = self
+            .screenService
+            .as_ref()
+            .ok_or_else(|| CoreLinkError::methodNotFound("screen.sendScreenInput"))?;
+        let request: EdgeScreenInputRequest = decodeValue(args)?;
+        encodeValue(service.sendScreenInput(request).map_err(serviceError)?)
     }
 }
 

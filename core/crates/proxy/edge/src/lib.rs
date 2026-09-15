@@ -5,9 +5,10 @@ use std::fmt::{Display, Formatter};
 use async_trait::async_trait;
 use operit_edge_contract::{
     EDGE_DEVICE_IO_OBJECT_ID, EDGE_DEVICE_IO_STATE_PROPERTY, EDGE_ROBOT_FACE_OBJECT_ID,
-    EDGE_ROBOT_FACE_STATE_PROPERTY,
+    EDGE_ROBOT_FACE_STATE_PROPERTY, EDGE_SCREEN_OBJECT_ID,
 };
 use operit_host_api::{DeviceDigitalOutputState, RobotFaceState};
+use operit_node_edge::{EdgeScreenInputRequest, EdgeScreenInputState, EdgeScreenSnapshot};
 use operit_link::{
     fromCoreValue, CoreCallRequest, CoreEventStream, CoreLinkError, CoreLinkSharedClient,
     CoreValue, CoreWatchRequest,
@@ -34,6 +35,13 @@ impl<C> EdgeProxy<C> {
     /// Returns the typed robot face proxy.
     pub fn robotFace(&mut self) -> EdgeRobotFaceProxy<'_, C> {
         EdgeRobotFaceProxy {
+            client: &mut self.client,
+        }
+    }
+
+    /// Returns the typed display proxy used by Core-side screen controls.
+    pub fn screen(&mut self) -> EdgeScreenProxy<'_, C> {
+        EdgeScreenProxy {
             client: &mut self.client,
         }
     }
@@ -76,6 +84,16 @@ pub trait EdgeRobotFaceClient {
 
     /// Opens one robot face expression watch through the Edge Service.
     async fn watchExpression(&mut self) -> Result<EdgeRobotFaceStateStream, EdgeProxyError>;
+}
+
+/// Defines the generic display operations exposed by an Edge node.
+#[async_trait(?Send)]
+pub trait EdgeScreenClient {
+    async fn getScreenSnapshot(&mut self) -> Result<EdgeScreenSnapshot, EdgeProxyError>;
+    async fn sendScreenInput(
+        &mut self,
+        request: EdgeScreenInputRequest,
+    ) -> Result<EdgeScreenInputState, EdgeProxyError>;
 }
 
 #[async_trait(?Send)]
@@ -127,6 +145,23 @@ where
     /// Opens one robot face state watch through the typed Edge Proxy.
     async fn watchExpression(&mut self) -> Result<EdgeRobotFaceStateStream, EdgeProxyError> {
         self.robotFace().watchExpression().await
+    }
+}
+
+#[async_trait(?Send)]
+impl<C> EdgeScreenClient for EdgeProxy<C>
+where
+    C: CoreLinkSharedClient,
+{
+    async fn getScreenSnapshot(&mut self) -> Result<EdgeScreenSnapshot, EdgeProxyError> {
+        self.screen().getScreenSnapshot().await
+    }
+
+    async fn sendScreenInput(
+        &mut self,
+        request: EdgeScreenInputRequest,
+    ) -> Result<EdgeScreenInputState, EdgeProxyError> {
+        self.screen().sendScreenInput(request).await
     }
 }
 
@@ -202,6 +237,51 @@ where
 /// Provides typed operations for the Edge robot face service.
 pub struct EdgeRobotFaceProxy<'a, C> {
     client: &'a mut C,
+}
+
+/// Provides typed operations for the generic Edge display service.
+pub struct EdgeScreenProxy<'a, C> {
+    client: &'a mut C,
+}
+
+impl<'a, C> EdgeScreenProxy<'a, C>
+where
+    C: CoreLinkSharedClient,
+{
+    /// Reads one RGB565 display snapshot through authenticated Link.
+    pub async fn getScreenSnapshot(&mut self) -> Result<EdgeScreenSnapshot, EdgeProxyError> {
+        let response = self
+            .client
+            .call(CoreCallRequest::new(
+                "edge-screen-read",
+                EDGE_SCREEN_OBJECT_ID,
+                "getScreenSnapshot",
+                CoreValue::emptyMap(),
+            ))
+            .await;
+        decodeResponse(response.result)
+    }
+
+    /// Sends one display input event through authenticated Link.
+    pub async fn sendScreenInput(
+        &mut self,
+        request: EdgeScreenInputRequest,
+    ) -> Result<EdgeScreenInputState, EdgeProxyError> {
+        let args = operit_link::toCoreValue(request).map_err(|error| EdgeProxyError {
+            code: "INVALID_ARGS".to_string(),
+            message: error.to_string(),
+        })?;
+        let response = self
+            .client
+            .call(CoreCallRequest::new(
+                "edge-screen-input",
+                EDGE_SCREEN_OBJECT_ID,
+                "sendScreenInput",
+                args,
+            ))
+            .await;
+        decodeResponse(response.result)
+    }
 }
 
 impl<'a, C> EdgeRobotFaceProxy<'a, C>

@@ -6,6 +6,8 @@ pub struct Esp32FirmwareConfig {
     pub wifiSsid: String,
     pub wifiPassword: String,
     pub httpPort: u16,
+    pub edgePort: u16,
+    pub edgeToken: String,
 }
 
 impl Esp32FirmwareConfig {
@@ -17,12 +19,19 @@ impl Esp32FirmwareConfig {
                 .unwrap_or("")
                 .to_string(),
             httpPort: 80,
+            edgePort: 8765,
+            edgeToken: option_env!("OPERIT_EDGE_TOKEN").unwrap_or("").to_string(),
         }
     }
 
     /// Returns whether Wi-Fi station credentials were supplied at build time.
     pub fn hasWifi(&self) -> bool {
         !self.wifiSsid.trim().is_empty()
+    }
+
+    /// Reports whether the authenticated Edge carrier can be enabled.
+    pub fn hasEdgeToken(&self) -> bool {
+        !self.edgeToken.trim().is_empty()
     }
 }
 
@@ -37,7 +46,10 @@ mod tests {
             wifiSsid: String::new(),
             wifiPassword: String::new(),
             httpPort: 80,
+            edgePort: 8765,
+            edgeToken: String::new(),
         };
         assert!(!config.hasWifi());
+        assert!(!config.hasEdgeToken());
     }
 }

@@ -17,6 +17,8 @@ pub use protocol::{
     fromCoreValue, toCoreValue, CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventKind,
     CoreEventStream, CoreLinkError, CoreMethodMode, CoreMethodProtocol, CorePayloadKind,
     CorePushItem, CorePushRequest, CoreRequestId, CoreValue, CoreWatchInitial, CoreWatchRequest,
+    LinkDeviceInfo, LinkFrame, LinkFramePayload, LinkPairFinishRequest, LinkPairFinishResponse,
+    LinkPairStartRequest, LinkPairStartResponse,
     CORE_INCREMENTAL_VALUES_ARGUMENT, CORE_INTERNAL_ROUTE_OBJECT_ID,
     CORE_ROUTE_STREAM_SOURCE_ARGS_ARGUMENT, CORE_ROUTE_STREAM_SOURCE_METHOD_ARGUMENT,
     CORE_ROUTE_STREAM_SOURCE_MODE_ARGUMENT, CORE_STREAM_POOL_OBJECT_ID,

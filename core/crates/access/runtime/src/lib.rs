@@ -72,6 +72,7 @@ use operit_util::RuntimeStorageLayout::{
     RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH, RUNTIME_LINK_ACCESS_IDENTITY_PATH,
     RUNTIME_LINK_ACCESS_INBOUND_SESSIONS_PATH, RUNTIME_LINK_ACCESS_OUTBOUND_SESSIONS_PATH,
     RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH, RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH,
+    RUNTIME_LINK_ACCESS_EDGE_SESSIONS_PATH,
 };
 
 pub mod CoreNodePeerLink;
@@ -431,6 +432,40 @@ impl LinkAccessStore {
             RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
             pairingId,
         )
+    }
+
+    /// Returns every completed lightweight Edge session owned by this Core.
+    pub fn edgeSessions(&self) -> Result<BTreeMap<String, PairedEdgeSessionRecord>, String> {
+        self.readRecordMap(RUNTIME_LINK_ACCESS_EDGE_SESSIONS_PATH)
+    }
+
+    /// Persists one named lightweight Edge session.
+    pub fn saveEdgeSession(
+        &self,
+        name: String,
+        record: PairedEdgeSessionRecord,
+    ) -> Result<(), String> {
+        if name.trim().is_empty() {
+            return Err("Edge session name must not be empty".to_string());
+        }
+        if record.endpoint.trim().is_empty()
+            || record.sessionId.trim().is_empty()
+            || record.deviceId.trim().is_empty()
+            || record.edgeDeviceId.trim().is_empty()
+            || record.sessionSecret.trim().is_empty()
+        {
+            return Err("Edge session record contains an empty required field".to_string());
+        }
+        self.writeMapRecord(RUNTIME_LINK_ACCESS_EDGE_SESSIONS_PATH, &name, &record)
+    }
+
+    /// Removes one named lightweight Edge session.
+    pub fn removeEdgeSession(&self, name: &str) -> Result<(), String> {
+        let sessions = self.edgeSessions()?;
+        sessions
+            .get(name)
+            .ok_or_else(|| format!("Edge session does not exist: {name}"))?;
+        self.removeMapRecord(RUNTIME_LINK_ACCESS_EDGE_SESSIONS_PATH, name)
     }
 
     /// Persists the active Link Access host configuration for this runtime.
@@ -1391,6 +1426,20 @@ pub struct PairStartState {
 pub struct PendingOutboundPairingRecord {
     pub baseUrl: String,
     pub state: PairStartState,
+}
+
+/// Stores one completed Core-to-Edge pairing. Edge sessions are separate from
+/// CoreNode sessions because an Edge is not part of routed CoreNode topology.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairedEdgeSessionRecord {
+    pub endpoint: String,
+    pub sessionId: String,
+    pub deviceId: String,
+    pub edgeDeviceId: String,
+    pub edgeDeviceInfo: RemoteDeviceInfo,
+    pub pairingServiceVersion: u16,
+    /// Base64 encoded session secret, used only by the local Core.
+    pub sessionSecret: String,
 }
 
 #[derive(Clone, Debug)]

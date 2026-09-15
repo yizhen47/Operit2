@@ -7,9 +7,11 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+base64.workspace = true
 operit-host-api = { path = "../../foundation/host-api" }
 operit-link = { path = "../../foundation/link" }
 operit-access-runtime = { path = "../../access/runtime" }
+operit-edge-transport = { path = "../edge-transport" }
 operit-runtime = { path = "../../runtime/application", default-features = false, features = ["javascript"] }
 operit-store = { path = "../../persistence/store" }
 operit-tools = { path = "../../tool/services", default-features = false }

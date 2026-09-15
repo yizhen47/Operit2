@@ -17,11 +17,13 @@ pub struct Esp32Wifi {
 
 impl Esp32Wifi {
     /// Connects to the compile-time station network and waits for IPv4.
-    pub fn connect(modem: Modem<'static>, config: &Esp32FirmwareConfig) -> HostResult<Self> {
+    pub fn connect(
+        modem: Modem<'static>,
+        config: &Esp32FirmwareConfig,
+        nvs: EspDefaultNvsPartition,
+    ) -> HostResult<Self> {
         let sysLoop = EspSystemEventLoop::take()
             .map_err(|error| HostError::new(format!("event loop: {error}")))?;
-        let nvs = EspDefaultNvsPartition::take()
-            .map_err(|error| HostError::new(format!("nvs: {error}")))?;
         let mut wifi = BlockingWifi::wrap(
             EspWifi::new(modem, sysLoop.clone(), Some(nvs))
                 .map_err(|error| HostError::new(format!("wifi driver: {error}")))?,

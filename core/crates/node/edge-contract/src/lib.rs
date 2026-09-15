@@ -9,3 +9,9 @@ pub const EDGE_ROBOT_FACE_OBJECT_ID: u32 = 2;
 
 /// Link property name used by the robot face expression watch.
 pub const EDGE_ROBOT_FACE_STATE_PROPERTY: &str = "robotFaceState";
+
+/// Numeric object id reserved for the generic lightweight display service.
+pub const EDGE_SCREEN_OBJECT_ID: u32 = 3;
+
+/// Link property name reserved for future display state watches.
+pub const EDGE_SCREEN_STATE_PROPERTY: &str = "screenState";

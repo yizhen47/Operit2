@@ -11,6 +11,7 @@ pub struct FirmwareStatusSnapshot {
     pub expression: String,
     pub ipv4: String,
     pub wifiSsid: String,
+    pub pairingCode: String,
 }
 
 /// Shared firmware status consumed by the local HTTP home page.
@@ -19,6 +20,7 @@ pub struct FirmwareStatus {
     expression: Mutex<String>,
     ipv4: Mutex<String>,
     wifiSsid: Mutex<String>,
+    pairingCode: Mutex<String>,
 }
 
 impl FirmwareStatus {
@@ -29,6 +31,7 @@ impl FirmwareStatus {
             expression: Mutex::new(expression.into()),
             ipv4: Mutex::new(String::new()),
             wifiSsid: Mutex::new(String::new()),
+            pairingCode: Mutex::new(String::new()),
         }
     }
 
@@ -53,6 +56,13 @@ impl FirmwareStatus {
         }
     }
 
+    /// Publishes the one-time Edge pairing code while a pairing is pending.
+    pub fn setPairingCode(&self, code: impl Into<String>) {
+        if let Ok(mut current) = self.pairingCode.lock() {
+            *current = code.into();
+        }
+    }
+
     /// Returns a copy of the values shown on the firmware home page.
     pub fn snapshot(&self) -> FirmwareStatusSnapshot {
         FirmwareStatusSnapshot {
@@ -69,6 +79,11 @@ impl FirmwareStatus {
                 .unwrap_or_default(),
             wifiSsid: self
                 .wifiSsid
+                .lock()
+                .map(|value| value.clone())
+                .unwrap_or_default(),
+            pairingCode: self
+                .pairingCode
                 .lock()
                 .map(|value| value.clone())
                 .unwrap_or_default(),
@@ -98,6 +113,7 @@ pub fn renderHomePage(snapshot: &FirmwareStatusSnapshot) -> String {
 <p>Expression: {expression}</p>\
 <p>Wi-Fi: {ssid}</p>\
 <p>IP: {ip}</p>\
+<p>Pairing code: {pairing}</p>\
 <p><a href=\"/screen\">打开屏幕实时预览</a></p>\
 <p>This node is an Edge capability device, not a full CoreNode.</p>\
 </body>\
@@ -106,17 +122,19 @@ pub fn renderHomePage(snapshot: &FirmwareStatusSnapshot) -> String {
         expression = htmlEscape(&snapshot.expression),
         ssid = htmlEscape(ssid),
         ip = htmlEscape(ip),
+        pairing = htmlEscape(&snapshot.pairingCode),
     )
 }
 
 /// Renders firmware status as JSON for machine clients.
 pub fn renderStatusJson(snapshot: &FirmwareStatusSnapshot) -> String {
     format!(
-        "{{\"boardId\":\"{}\",\"expression\":\"{}\",\"wifiSsid\":\"{}\",\"ipv4\":\"{}\"}}",
+        "{{\"boardId\":\"{}\",\"expression\":\"{}\",\"wifiSsid\":\"{}\",\"ipv4\":\"{}\",\"pairingCode\":\"{}\"}}",
         jsonEscape(&snapshot.boardId),
         jsonEscape(&snapshot.expression),
         jsonEscape(&snapshot.wifiSsid),
-        jsonEscape(&snapshot.ipv4)
+        jsonEscape(&snapshot.ipv4),
+        jsonEscape(&snapshot.pairingCode)
     )
 }
 

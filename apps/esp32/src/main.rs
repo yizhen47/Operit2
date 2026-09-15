@@ -2,6 +2,12 @@
 
 mod app;
 mod config;
+#[cfg(target_os = "espidf")]
+mod edge_link;
+#[cfg(target_os = "espidf")]
+mod edge_store;
+#[cfg(target_os = "espidf")]
+mod edge_screen;
 mod status;
 mod ui;
 
@@ -34,6 +40,7 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
 
     use esp_idf_hal::delay::FreeRtos;
     use esp_idf_hal::peripherals::Peripherals;
+    use esp_idf_svc::nvs::EspDefaultNvsPartition;
     use operit_board_esp32::{Esp32Board, INITIAL_EXPRESSION, LED_GREEN_PIN, LED_RED_PIN};
     use operit_host_api::HostError;
     use operit_node_edge::{createDeviceIoService, createRobotFaceService, EdgeNode};
@@ -73,6 +80,8 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
 
     use crate::app::Esp32App;
     use crate::config::Esp32FirmwareConfig;
+    use crate::edge_screen::Esp32ScreenService;
+    use crate::edge_store::Esp32EdgePairingStore;
     use crate::status::FirmwareStatus;
     use crate::web::Esp32WebHome;
     use crate::wifi::Esp32Wifi;
@@ -83,6 +92,9 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     let config = Esp32FirmwareConfig::fromEnv();
     let peripherals = Peripherals::take().map_err(|error| HostError::new(error.to_string()))?;
     let modem = peripherals.modem;
+    let nvsPartition = EspDefaultNvsPartition::take()
+        .map_err(|error| HostError::new(format!("nvs: {error}")))?;
+    let edgeStore = Arc::new(Esp32EdgePairingStore::new(nvsPartition.clone())?);
     let mut board = Esp32Board::new(
         peripherals.spi2,
         peripherals.pins.gpio2,
@@ -103,14 +115,17 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
     )?;
     let hostManager = board.installIntoHostManager();
     let screenMirror = board.screenMirror();
+    let screenService = Arc::new(Esp32ScreenService::new(Arc::clone(&screenMirror)));
     let edgeNode = EdgeNode::new(createDeviceIoService(hostManager.clone()))
-        .withRobotFaceService(createRobotFaceService(hostManager));
+        .withRobotFaceService(createRobotFaceService(hostManager))
+        .withScreenService(screenService.clone());
+    let edgeServerNode = std::sync::Arc::new(edgeNode.clone());
     let edgeProxy = EdgeProxy::new(edgeNode);
     let status = Arc::new(FirmwareStatus::new(INITIAL_EXPRESSION));
     let mut app = Esp32App::new(edgeProxy, Arc::clone(&status));
     blockOn(app.setExpression("booting")).map_err(edgeError)?;
     let _wifi = if config.hasWifi() {
-        match Esp32Wifi::connect(modem, &config) {
+        match Esp32Wifi::connect(modem, &config, nvsPartition.clone()) {
             Ok(wifi) => {
                 let ip = wifi.ipv4()?;
                 status.setWifiSsid(config.wifiSsid.clone());
@@ -134,6 +149,13 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
         );
         None
     };
+    let _edgeLink = edge_link::Esp32EdgeLinkServer::start(
+        edgeServerNode,
+        config.edgePort,
+        config.edgeToken.clone(),
+        Arc::clone(&status),
+        edgeStore,
+    )?;
     let _home = if status.snapshot().ipv4.is_empty() {
         None
     } else {
@@ -148,6 +170,29 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
 
     let mut swipe = SwipeTracker::new();
     loop {
+        for input in screenService.drainInputs() {
+            if input.action == "swipe" {
+                if let (Some(endX), Some(endY)) = (input.endX, input.endY) {
+                    if let Some(gesture) = crate::ui::gestureFromSwipe(
+                        input.x as i16,
+                        input.y as i16,
+                        endX as i16,
+                        endY as i16,
+                    ) {
+                        if app.handleGesture(gesture) {
+                            match app.surface() {
+                                HomeSurface::PluginShelf => board.paintPluginShelf()?,
+                                HomeSurface::Face => {
+                                    let expression = status.snapshot().expression;
+                                    blockOn(app.setExpression(&expression)).map_err(edgeError)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            log::debug!("operit-esp32 remote screen input: {}", input.action);
+        }
         let point = match board.pollTouch() {
             Ok(point) => point,
             Err(error) => {
