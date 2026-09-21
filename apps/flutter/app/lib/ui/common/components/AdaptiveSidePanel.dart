@@ -21,6 +21,7 @@ class AdaptiveSidePanel extends StatefulWidget {
     this.resizeHandleVisualWidth = 3,
     this.resizeHandleHeight = 56,
     this.closedDropTarget,
+    this.animate = true,
   });
 
   final bool open;
@@ -35,6 +36,7 @@ class AdaptiveSidePanel extends StatefulWidget {
   final double resizeHandleVisualWidth;
   final double resizeHandleHeight;
   final Widget? closedDropTarget;
+  final bool animate;
 
   /// Creates the state that tracks the panel width and drag interaction.
   @override
@@ -219,8 +221,9 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
   }
 
   /// Returns the transition duration appropriate for the current resize state.
-  Duration get _animationDuration =>
-      _resizing ? Duration.zero : const Duration(milliseconds: 220);
+  Duration get _animationDuration => _resizing || !widget.animate
+      ? Duration.zero
+      : const Duration(milliseconds: 220);
 }
 
 class _AdaptiveSidePanelResizeHandle extends StatelessWidget {

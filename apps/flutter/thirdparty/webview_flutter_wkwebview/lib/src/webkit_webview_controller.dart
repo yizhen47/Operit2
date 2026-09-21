@@ -356,6 +356,9 @@ class WebKitWebViewController extends PlatformWebViewController {
       <String, WebKitJavaScriptChannelParams>{};
 
   bool _zoomEnabled = true;
+  bool _verticalScrollBarEnabled = true;
+  bool _horizontalScrollBarEnabled = true;
+  Future<void> _macOSScrollBarStyleUpdate = Future<void>.value();
   WebKitNavigationDelegate? _currentNavigationDelegate;
 
   void Function(bool)? _onCanGoBackChangeCallback;
@@ -591,30 +594,57 @@ class WebKitWebViewController extends PlatformWebViewController {
 
   @override
   Future<void> scrollTo(int x, int y) {
-    // TODO(stuartmorgan): Investigate doing this via on macOS with JS instead.
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      return runJavaScript('window.scrollTo($x, $y);');
+    }
     return _webView.scrollView.setContentOffset(x.toDouble(), y.toDouble());
   }
 
   @override
   Future<void> scrollBy(int x, int y) async {
-    // TODO(stuartmorgan): Investigate doing this via on macOS with JS instead.
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      return runJavaScript('window.scrollBy($x, $y);');
+    }
     return _webView.scrollView.scrollBy(x.toDouble(), y.toDouble());
   }
 
   @override
   Future<Offset> getScrollPosition() async {
-    // TODO(stuartmorgan): Investigate doing this via on macOS with JS instead.
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      final Object result = await runJavaScriptReturningResult(
+        'JSON.stringify([window.scrollX || window.pageXOffset || 0, '
+        'window.scrollY || window.pageYOffset || 0]);',
+      );
+      final Object? decoded = jsonDecode(result.toString());
+      if (decoded is! List<Object?> || decoded.length < 2) {
+        throw StateError('WKWebView returned an invalid scroll position');
+      }
+      final Object? x = decoded[0];
+      final Object? y = decoded[1];
+      if (x is! num || y is! num) {
+        throw StateError('WKWebView returned a non-numeric scroll position');
+      }
+      return Offset(x.toDouble(), y.toDouble());
+    }
     final List<double> position = await _webView.scrollView.getContentOffset();
     return Offset(position[0], position[1]);
   }
 
   @override
   Future<void> setVerticalScrollBarEnabled(bool enabled) {
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      _verticalScrollBarEnabled = enabled;
+      return _applyMacOSScrollBarStyle();
+    }
     return _webView.scrollView.setShowsVerticalScrollIndicator(enabled);
   }
 
   @override
   Future<void> setHorizontalScrollBarEnabled(bool enabled) {
+    if (defaultTargetPlatform == TargetPlatform.macOS) {
+      _horizontalScrollBarEnabled = enabled;
+      return _applyMacOSScrollBarStyle();
+    }
     return _webView.scrollView.setShowsHorizontalScrollIndicator(enabled);
   }
 
@@ -624,7 +654,7 @@ class WebKitWebViewController extends PlatformWebViewController {
       case TargetPlatform.iOS:
         return true;
       case TargetPlatform.macOS:
-        return false;
+        return true;
       case _:
         throw UnsupportedError(
           'This plugin does not support this platform: $defaultTargetPlatform',
@@ -711,6 +741,22 @@ class WebKitWebViewController extends PlatformWebViewController {
     } else {
       await _disableZoom();
     }
+  }
+
+  /// Sets the page viewport zoom factor.
+  @override
+  Future<void> setZoomFactor(double zoomFactor) {
+    if (!zoomFactor.isFinite || zoomFactor <= 0) {
+      throw ArgumentError.value(zoomFactor, 'zoomFactor');
+    }
+
+    final int? identifier = PigeonInstanceManager.instance.getIdentifier(
+      _webView.nativeWebView,
+    );
+    if (identifier == null) {
+      throw StateError('WKWebView is not registered with the instance manager');
+    }
+    return _webView.setPageZoom(identifier, zoomFactor);
   }
 
   @override
@@ -881,7 +927,7 @@ class WebKitWebViewController extends PlatformWebViewController {
   Future<void> _resetUserScripts({String? removedJavaScriptChannel}) async {
     final WKUserContentController controller = await _webView.configuration
         .getUserContentController();
-    unawaited(controller.removeAllUserScripts());
+    await controller.removeAllUserScripts();
     // TODO(bparrishMines): This can be replaced with
     // `removeAllScriptMessageHandlers` once Dart supports runtime version
     // checking. (e.g. The equivalent to @availability in Objective-C.)
@@ -905,7 +951,69 @@ class WebKitWebViewController extends PlatformWebViewController {
       // Console logs are forwarded with a WKUserScript, so this adds it back
       // if a console callback was registered with [setOnConsoleMessage].
       if (_onConsoleMessageCallback != null) _injectConsoleOverride(),
+      if (defaultTargetPlatform == TargetPlatform.macOS)
+        _applyMacOSScrollBarStyle(),
     ]);
+  }
+
+  /// Applies scrollbar visibility to macOS documents, where WKWebView does
+  /// not expose UIKit's UIScrollView API. The user script covers future
+  /// navigations; the direct evaluation updates the currently loaded page.
+  Future<void> _applyMacOSScrollBarStyle() {
+    if (defaultTargetPlatform != TargetPlatform.macOS) {
+      return Future<void>.value();
+    }
+
+    // Calls from a widget's initialization often arrive back-to-back. Queue
+    // them so the latest style script cannot be installed before an older
+    // script and overwrite its state on the next navigation.
+    _macOSScrollBarStyleUpdate = _macOSScrollBarStyleUpdate.then<void>(
+      (_) => _applyMacOSScrollBarStyleNow(),
+      onError: (Object _, StackTrace __) => _applyMacOSScrollBarStyleNow(),
+    );
+    return _macOSScrollBarStyleUpdate;
+  }
+
+  Future<void> _applyMacOSScrollBarStyleNow() async {
+    final verticalRule = _verticalScrollBarEnabled
+        ? ''
+        : '*::-webkit-scrollbar:vertical { width: 0 !important; }';
+    final horizontalRule = _horizontalScrollBarEnabled
+        ? ''
+        : '*::-webkit-scrollbar:horizontal { height: 0 !important; }';
+    final source =
+        '''
+(function() {
+  var id = '__operit_webview_scrollbar_style';
+  var style = document.getElementById(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.id = id;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  style.textContent = ${jsonEncode('$verticalRule$horizontalRule')};
+})();
+''';
+
+    final WKUserContentController contentController = await _webView
+        .configuration
+        .getUserContentController();
+    await contentController.addUserScript(
+      WKUserScript(
+        source: source,
+        injectionTime: UserScriptInjectionTime.atDocumentStart,
+        isForMainFrameOnly: false,
+      ),
+    );
+
+    // The page may not exist yet (for example when called during widget
+    // initialization). In that case the user script still applies on the
+    // first navigation, so the evaluation failure is intentionally ignored.
+    try {
+      await runJavaScript(source);
+    } on PlatformException {
+      // No document is available before the first navigation.
+    }
   }
 
   Future<void> _disableZoom() async {

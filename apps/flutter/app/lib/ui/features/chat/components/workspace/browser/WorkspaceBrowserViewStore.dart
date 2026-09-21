@@ -35,7 +35,8 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
       WorkspaceBrowserViewStore._();
 
   static const String _homeUrl = 'https://www.bing.com';
-  static const double _defaultZoomFactor = 1.0;
+  // Keep the workspace UI aligned with the host-owned WebView default.
+  static const double _defaultZoomFactor = 0.4;
   static const double _minZoomFactor = 0.1;
   static const double _maxZoomFactor = 2.0;
   static const double _zoomStep = 0.1;
@@ -279,6 +280,11 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   /// Restores the owner WebView zoom factor to the workspace default.
   void resetZoom() {
     unawaited(_setZoomFactor(_defaultZoomFactor));
+  }
+
+  /// Sets the current owner WebView to an explicit zoom factor.
+  void setZoomFactor(double zoomFactor) {
+    unawaited(_setZoomFactor(zoomFactor));
   }
 
   /// Reads owner-side userscript menu commands through Core.
@@ -537,11 +543,16 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   Future<void> _setZoomFactor(double value) async {
     final tab = _requireCurrentTab();
     final next = value.clamp(_minZoomFactor, _maxZoomFactor).toDouble();
+    if ((tab.zoomFactor - next).abs() < 0.0001) {
+      return;
+    }
+    // Do this before the asynchronous Core command so rapid +/- presses use
+    // the previous requested factor rather than a stale completed factor.
+    tab.update(zoomFactor: next);
     final result = await _sessions.setZoomFactor(tab.id, next);
     if (!result.success) {
-      throw StateError(result.error ?? 'Browser zoom command failed');
+      tab.update(errorText: result.error ?? 'Browser zoom command failed');
     }
-    tab.update(zoomFactor: next);
   }
 
   /// Applies one serialized compositor descriptor to a workspace tab.

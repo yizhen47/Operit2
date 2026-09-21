@@ -10,9 +10,12 @@
   #error("Unsupported platform.")
 #endif
 
+import WebKit
+
 public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
   var proxyApiRegistrar: ProxyAPIRegistrar?
   private var themeChannel: FlutterMethodChannel?
+  private var zoomChannel: FlutterMethodChannel?
 
   init(binaryMessenger: FlutterBinaryMessenger) {
     proxyApiRegistrar = ProxyAPIRegistrar(
@@ -33,6 +36,122 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
       WebViewTheme.setDark(scheme == "dark")
       result(nil)
     }
+
+    zoomChannel = FlutterMethodChannel(name: "operit/webview_zoom", binaryMessenger: binaryMessenger)
+    zoomChannel?.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "setPageZoom" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+
+      guard let arguments = call.arguments as? [String: Any],
+        let identifierNumber = arguments["identifier"] as? NSNumber,
+        let zoomNumber = arguments["zoomFactor"] as? NSNumber
+      else {
+        result(
+          FlutterError(
+            code: "invalid_arguments",
+            message: "setPageZoom expects an identifier and a zoomFactor.",
+            details: nil))
+        return
+      }
+
+      let zoomFactor = zoomNumber.doubleValue
+      guard zoomFactor.isFinite, zoomFactor > 0 else {
+        result(
+          FlutterError(
+            code: "invalid_zoom_factor",
+            message: "zoomFactor must be finite and greater than zero.",
+            details: zoomFactor))
+        return
+      }
+
+      let identifier = identifierNumber.int64Value
+      DispatchQueue.main.async { [weak self] in
+        guard let self else {
+          result(
+            FlutterError(
+              code: "plugin_detached",
+              message: "The WebView plugin was detached before page zoom could be applied.",
+              details: nil))
+          return
+        }
+        self.setPageZoom(
+          identifier: identifier,
+          zoomFactor: zoomFactor,
+          attempt: 0,
+          result: result)
+      }
+    }
+  }
+
+  /// Applies zoom after the Pigeon-created WebView has been registered.
+  ///
+  /// The Dart proxy constructor and this custom method channel use different
+  /// channels, so their first messages can cross in flight during startup.
+  private func setPageZoom(
+    identifier: Int64,
+    zoomFactor: Double,
+    attempt: Int,
+    result: @escaping FlutterResult
+  ) {
+    guard let webView: WKWebView = proxyApiRegistrar?.instanceManager.instance(
+      forIdentifier: identifier)
+    else {
+      guard attempt < 100 else {
+        result(
+          FlutterError(
+            code: "webview_not_found",
+            message: "No WKWebView is registered for the supplied identifier.",
+            details: identifier))
+        return
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.005) { [weak self] in
+        guard let self else {
+          result(
+            FlutterError(
+              code: "plugin_detached",
+              message: "The WebView plugin was detached before page zoom could be applied.",
+              details: nil))
+          return
+        }
+        self.setPageZoom(
+          identifier: identifier,
+          zoomFactor: zoomFactor,
+          attempt: attempt + 1,
+          result: result)
+      }
+      return
+    }
+
+    #if os(iOS)
+      if #available(iOS 14.0, *) {
+        webView.pageZoom = zoomFactor
+        result(nil)
+      } else {
+        result(
+          FlutterError(
+            code: "unsupported_os_version",
+            message: "WKWebView.pageZoom requires iOS 14.0 or newer.",
+            details: nil))
+      }
+    #elseif os(macOS)
+      if #available(macOS 11.0, *) {
+        webView.pageZoom = zoomFactor
+      } else {
+        // pageZoom was introduced in macOS 11. WKWebView's older
+        // magnification property changes the same page content scale and
+        // is available for the app's macOS 10.15 deployment target.
+        webView.magnification = zoomFactor
+      }
+      result(nil)
+    #else
+      result(
+        FlutterError(
+          code: "unsupported_platform",
+          message: "WKWebView page zoom is not supported on this platform.",
+          details: nil))
+    #endif
   }
 
   public static func register(with registrar: FlutterPluginRegistrar) {
@@ -56,6 +175,7 @@ public class WebViewFlutterPlugin: NSObject, FlutterPlugin {
 
   public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
     themeChannel?.setMethodCallHandler(nil)
+    zoomChannel?.setMethodCallHandler(nil)
     tearDownProxyAPIRegistrar()
   }
 

@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import 'web_kit.g.dart';
 
@@ -11,6 +12,8 @@ import 'web_kit.g.dart';
 /// iOS and macOS reference different `WebView` implementations, so this handles
 /// delegating calls to the implementation of the current platform.
 class PlatformWebView {
+  static const String _zoomChannelName = 'operit/webview_zoom';
+
   /// Creates a [PlatformWebView].
   PlatformWebView({
     required WKWebViewConfiguration initialConfiguration,
@@ -321,6 +324,22 @@ class PlatformWebView {
     }
 
     throw UnimplementedError('${webView.runtimeType} is not supported.');
+  }
+
+  /// Sets the native WebKit page zoom for this view.
+  ///
+  /// `WKWebView.pageZoom` is not part of the generated proxy API used by this
+  /// fork, so the platform package exposes this one operation through a small
+  /// method channel. The native side resolves [webViewIdentifier] through the
+  /// same Pigeon instance manager and updates the actual `WKWebView`.
+  Future<void> setPageZoom(int webViewIdentifier, double zoomFactor) async {
+    await MethodChannel(
+      _zoomChannelName,
+      const StandardMethodCodec(),
+    ).invokeMethod<void>('setPageZoom', <String, Object?>{
+      'identifier': webViewIdentifier,
+      'zoomFactor': zoomFactor,
+    });
   }
 
   /// The view’s background color.

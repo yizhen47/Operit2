@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../common/components/AdaptiveSidePanel.dart';
@@ -68,6 +67,10 @@ class WorkspaceShell extends StatelessWidget {
       resizeHandleHitWidth: workspaceResizeHandleHitWidth,
       resizeHandleVisualWidth: workspaceResizeHandleVisualWidth,
       resizeHandleHeight: workspaceResizeHandleHeight,
+      // AppKit platform views visibly flicker while their host is moved by an
+      // implicit Flutter position animation. Keep the workspace stationary on
+      // macOS, where its browser pane contains a native WKWebView.
+      animate: kIsWeb || defaultTargetPlatform != TargetPlatform.macOS,
       closedDropTarget: _WorkspacePluginDropTarget(
         controller: dockController,
         onAccepted: () => onWorkspaceOpenChanged(true),

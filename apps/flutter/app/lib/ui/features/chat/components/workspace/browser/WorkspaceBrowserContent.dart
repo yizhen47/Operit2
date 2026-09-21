@@ -68,11 +68,11 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       WorkspaceBrowserViewStore.instance;
   final FocusNode _browserFocusNode = FocusNode();
   final GlobalKey _menuButtonKey = GlobalKey();
+  final GlobalKey _zoomButtonKey = GlobalKey();
   OverlayEntry? _menuPopupEntry;
+  OverlayEntry? _zoomPopupEntry;
   OverlayEntry? _panelPopupEntry;
   bool _initialized = false;
-
-  WorkspaceBrowserTabState get _currentTab => _sessionStore.currentTab!;
 
   @override
   void didChangeDependencies() {
@@ -117,6 +117,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   @override
   void dispose() {
     _dismissMenuPopup();
+    _dismissZoomPopup();
     _dismissPanelPopup();
     _browserFocusNode.dispose();
     _sessionStore.detachUi();
@@ -240,6 +241,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
       _dismissMenuPopup();
       return;
     }
+    _dismissZoomPopup();
     final renderBox =
         _menuButtonKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox == null || !renderBox.attached) {
@@ -283,75 +285,88 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
               left: left,
               top: top,
               width: popupWidth,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {},
-                child: OperitGlassSurface(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.surfaceContainer.withValues(alpha: 0.62),
-                  layer: OperitGlassSurfaceLayer.card,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.outlineVariant.withValues(alpha: 0.2),
-                  ),
-                  shadows: const <BoxShadow>[
-                    BoxShadow(
-                      color: Color(0x22000000),
-                      blurRadius: 18,
-                      offset: Offset(0, 8),
+              child: AnimatedBuilder(
+                animation: Listenable.merge(<Listenable>[
+                  _sessionStore,
+                  _sessionStore.stores.downloads,
+                ]),
+                builder: (context, child) {
+                  final tab = _sessionStore.currentTab;
+                  if (tab == null) {
+                    return const SizedBox.shrink();
+                  }
+                  return AnimatedBuilder(
+                    animation: tab,
+                    builder: (context, child) => OperitGlassSurface(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainer.withValues(alpha: 0.62),
+                      layer: OperitGlassSurfaceLayer.card,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.outlineVariant.withValues(alpha: 0.2),
+                      ),
+                      shadows: const <BoxShadow>[
+                        BoxShadow(
+                          color: Color(0x22000000),
+                          blurRadius: 18,
+                          offset: Offset(0, 8),
+                        ),
+                      ],
+                      material: true,
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(maxHeight: maxHeight),
+                        child: WorkspaceBrowserMenuSheet(
+                          onHistory: () {
+                            _dismissMenuPopup();
+                            _openHistorySheet();
+                          },
+                          onBookmarks: () {
+                            _dismissMenuPopup();
+                            _openBookmarkSheet();
+                          },
+                          onDownloads: () {
+                            _dismissMenuPopup();
+                            _openDownloadSheet();
+                          },
+                          onUserscripts: () {
+                            _dismissMenuPopup();
+                            _openUserscriptSheet();
+                          },
+                          onPermissions: () {
+                            _dismissMenuPopup();
+                            _openPermissionSheet();
+                          },
+                          onClearStorage: () {
+                            _dismissMenuPopup();
+                            _openSiteDataSheet();
+                          },
+                          zoomLabel: '${tab.zoomPercent}%',
+                          onZoomOut: _sessionStore.zoomOut,
+                          zoomButtonKey: _zoomButtonKey,
+                          onZoomMenuRequested: _toggleZoomPopup,
+                          onZoomIn: _sessionStore.zoomIn,
+                          desktopMode: tab.desktopMode,
+                          onDesktopModeChanged: (enabled) {
+                            _dismissMenuPopup();
+                            unawaited(_sessionStore.setDesktopMode(enabled));
+                          },
+                          onLoadMenuCommands: () {
+                            return _sessionStore.loadMenuCommands();
+                          },
+                          onRunMenuCommand: (index) {
+                            _dismissMenuPopup();
+                            unawaited(_sessionStore.runMenuCommand(index));
+                          },
+                          activeDownloadCount:
+                              _sessionStore.activeDownloadCount,
+                        ),
+                      ),
                     ),
-                  ],
-                  material: true,
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(maxHeight: maxHeight),
-                    child: WorkspaceBrowserMenuSheet(
-                      onHistory: () {
-                        _dismissMenuPopup();
-                        _openHistorySheet();
-                      },
-                      onBookmarks: () {
-                        _dismissMenuPopup();
-                        _openBookmarkSheet();
-                      },
-                      onDownloads: () {
-                        _dismissMenuPopup();
-                        _openDownloadSheet();
-                      },
-                      onUserscripts: () {
-                        _dismissMenuPopup();
-                        _openUserscriptSheet();
-                      },
-                      onPermissions: () {
-                        _dismissMenuPopup();
-                        _openPermissionSheet();
-                      },
-                      onClearStorage: () {
-                        _dismissMenuPopup();
-                        _openSiteDataSheet();
-                      },
-                      zoomLabel: '${_currentTab.zoomPercent}%',
-                      onZoomOut: _sessionStore.zoomOut,
-                      onZoomReset: _sessionStore.resetZoom,
-                      onZoomIn: _sessionStore.zoomIn,
-                      desktopMode: _currentTab.desktopMode,
-                      onDesktopModeChanged: (enabled) {
-                        _dismissMenuPopup();
-                        unawaited(_sessionStore.setDesktopMode(enabled));
-                      },
-                      onLoadMenuCommands: () {
-                        return _sessionStore.loadMenuCommands();
-                      },
-                      onRunMenuCommand: (index) {
-                        _dismissMenuPopup();
-                        unawaited(_sessionStore.runMenuCommand(index));
-                      },
-                      activeDownloadCount: _sessionStore.activeDownloadCount,
-                    ),
-                  ),
-                ),
+                  );
+                },
               ),
             ),
           ],
@@ -362,8 +377,124 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   }
 
   void _dismissMenuPopup() {
+    _dismissZoomPopup();
     _menuPopupEntry?.remove();
     _menuPopupEntry = null;
+  }
+
+  static const List<double> _zoomFactors = <double>[
+    0.25,
+    0.4,
+    0.5,
+    0.67,
+    0.8,
+    1.0,
+    1.25,
+    1.5,
+    1.75,
+    2.0,
+  ];
+
+  /// Shows the zoom choices above the browser menu entry.
+  void _toggleZoomPopup() {
+    if (_zoomPopupEntry != null) {
+      _dismissZoomPopup();
+      return;
+    }
+    final anchor = _zoomButtonKey.currentContext?.findRenderObject();
+    final overlay = Overlay.of(context);
+    final overlayRenderObject = overlay.context.findRenderObject();
+    if (anchor is! RenderBox ||
+        !anchor.attached ||
+        overlayRenderObject is! RenderBox) {
+      return;
+    }
+    final anchorOffset = anchor.localToGlobal(
+      Offset.zero,
+      ancestor: overlayRenderObject,
+    );
+    final overlaySize = overlayRenderObject.size;
+    const popupWidth = 112.0;
+    const itemHeight = 36.0;
+    final popupHeight = itemHeight * _zoomFactors.length;
+    final left = (anchorOffset.dx + (anchor.size.width - popupWidth) / 2)
+        .clamp(8.0, overlaySize.width - popupWidth - 8.0)
+        .toDouble();
+    final below = anchorOffset.dy + anchor.size.height + 4;
+    final above = anchorOffset.dy - popupHeight - 4;
+    final top = below + popupHeight <= overlaySize.height - 8
+        ? below
+        : above.clamp(8.0, overlaySize.height - popupHeight - 8.0).toDouble();
+    final tab = _sessionStore.currentTab;
+    if (tab == null) {
+      return;
+    }
+    _zoomPopupEntry = OverlayEntry(
+      builder: (context) {
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onTap: _dismissZoomPopup,
+                child: const SizedBox.expand(),
+              ),
+            ),
+            Positioned(
+              left: left,
+              top: top,
+              width: popupWidth,
+              height: popupHeight,
+              child: Material(
+                color: Theme.of(context).colorScheme.surfaceContainer,
+                elevation: 8,
+                borderRadius: BorderRadius.circular(8),
+                clipBehavior: Clip.antiAlias,
+                child: AnimatedBuilder(
+                  animation: tab,
+                  builder: (context, child) {
+                    return ListView.builder(
+                      padding: EdgeInsets.zero,
+                      itemExtent: itemHeight,
+                      itemCount: _zoomFactors.length,
+                      itemBuilder: (context, index) {
+                        final factor = _zoomFactors[index];
+                        final selected =
+                            (tab.zoomFactor - factor).abs() < 0.005;
+                        return InkWell(
+                          onTap: () {
+                            _dismissZoomPopup();
+                            _sessionStore.setZoomFactor(factor);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            color: selected
+                                ? Theme.of(context).colorScheme.primaryContainer
+                                      .withValues(alpha: 0.32)
+                                : null,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '${(factor * 100).round()}%',
+                              style: Theme.of(context).textTheme.bodyMedium,
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+    overlay.insert(_zoomPopupEntry!);
+  }
+
+  void _dismissZoomPopup() {
+    _zoomPopupEntry?.remove();
+    _zoomPopupEntry = null;
   }
 
   void _showPanelPopup(Widget child, {double preferredWidth = 320}) {
