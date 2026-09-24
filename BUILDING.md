@@ -22,6 +22,8 @@ Common tools:
 ```text
 Rust stable toolchain with rustup
 Python virtual environment at .venv
+Node.js with Corepack enabled
+pnpm 10.7.0 for plugins/packages/buildin/workflow
 Git
 ```
 
@@ -62,6 +64,24 @@ Required keys:
 GITHUB_TOKEN
 GITHUB_API_URL
 ```
+
+## Built-In Workflow Plugin
+
+The workflow plugin is a pnpm project. Its `package.json` pins the package
+manager to pnpm 10.7.0; use Corepack so local commands honor that pin. The
+pnpm lockfile is the dependency source of truth. Do not use npm in this package.
+
+From the workflow package directory:
+
+```powershell
+corepack pnpm --version
+corepack pnpm install --frozen-lockfile
+corepack pnpm run pack:toolpkg
+corepack pnpm run test:web
+```
+
+`plugins/tools/sync_plugin_packages.py` invokes the package build through
+Corepack, so automated synchronization uses the version pinned in `package.json`.
 
 ## Rust Targets
 

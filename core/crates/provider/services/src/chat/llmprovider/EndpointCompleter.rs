@@ -85,9 +85,11 @@ impl EndpointCompleter {
             }
             ApiProviderType::GOOGLE
             | ApiProviderType::GEMINI_GENERIC
-            | ApiProviderType::OPENAI_CODEX
             | ApiProviderType::OPENCODE
             | ApiProviderType::LOCAL_MODEL => endpoint.to_string(),
+            ApiProviderType::OPENAI_CODEX => {
+                "https://chatgpt.com/backend-api/codex/responses".to_string()
+            }
             _ => Self::completeEndpoint(endpoint),
         }
     }
@@ -178,6 +180,13 @@ mod tests {
         assert_eq!(
             EndpointCompleter::completeEndpointForProviderType(
                 "https://chatgpt.com/backend-api/codex/responses",
+                ApiProviderType::OPENAI_CODEX,
+            ),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
+        assert_eq!(
+            EndpointCompleter::completeEndpointForProviderType(
+                "https://custom-proxy.example.com",
                 ApiProviderType::OPENAI_CODEX,
             ),
             "https://chatgpt.com/backend-api/codex/responses"

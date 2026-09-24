@@ -1206,6 +1206,48 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelApiKey => 'API Key';
 
   @override
+  String get settingsModelCodexLogin => 'ChatGPT 登录';
+
+  @override
+  String get settingsModelCodexLoginTitle => '登录 ChatGPT Codex';
+
+  @override
+  String get settingsModelCodexLoginDescription =>
+      'OpenAI Codex 使用 ChatGPT 订阅登录，不使用 API Key。';
+
+  @override
+  String settingsModelCodexSignedIn(String account) {
+    return '已登录 $account';
+  }
+
+  @override
+  String get settingsModelCodexSignedOut => '尚未登录 ChatGPT';
+
+  @override
+  String get settingsModelCodexBrowser => '浏览器登录';
+
+  @override
+  String get settingsModelCodexDevice => '设备码登录';
+
+  @override
+  String get settingsModelCodexWaiting => '正在等待 ChatGPT 授权…';
+
+  @override
+  String get settingsModelCodexDeviceInstructions =>
+      '在打开的页面输入这个验证码，然后回到 Operit。';
+
+  @override
+  String get settingsModelCodexOpenPage => '打开验证页面';
+
+  @override
+  String get settingsModelCodexLogout => '退出登录';
+
+  @override
+  String settingsModelCodexLoginFailed(String error) {
+    return 'ChatGPT 登录失败：$error';
+  }
+
+  @override
   String get settingsModelApiKeyPool => 'API Key 池';
 
   @override
@@ -3544,10 +3586,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsRuntimeControlCapabilityNetworkUser => '使用网络';
 
   @override
+  String get settingsRuntimeControlCapabilityChatRead => '读取聊天记录';
+
+  @override
   String get settingsRuntimeControlCapabilityViewDevices => '查看设备与当前身份';
 
   @override
   String get settingsRuntimeControlCapabilityApproval => '审批授权';
+
+  @override
+  String chatRoutePermissionDenied(Object targetNodeId, Object capability) {
+    return '权限不足：目标设备 $targetNodeId 没有 $capability 权限。';
+  }
 
   @override
   String get settingsRuntimeControlRoleAdministrator => '管理员';

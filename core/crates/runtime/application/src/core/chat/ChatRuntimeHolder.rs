@@ -85,6 +85,15 @@ impl ChatRuntimeHolder {
         Some(self.getCore(ChatRuntimeSlot::MAIN))
     }
 
+    /// Resolves a detached window's stable slot identity to its local chat core.
+    ///
+    /// The generated proxy uses the slot id as an instance argument because all
+    /// detached windows share the same generated object schema.
+    #[allow(non_snake_case)]
+    pub fn coreForInstanceId(&mut self, instanceId: String) -> Option<&mut ChatServiceCore> {
+        Some(self.getCore(ChatRuntimeSlot::DETACHED(instanceId)))
+    }
+
     /// Creates a holder using bootstrap cores without host-backed enhanced AI services.
     pub fn new(fileSystemHost: Arc<dyn FileSystemHost>) -> Self {
         Self::newWithFactory(ChatRuntimeCoreFactory::bootstrap(fileSystemHost))

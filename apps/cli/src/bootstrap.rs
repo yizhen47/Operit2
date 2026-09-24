@@ -6,6 +6,7 @@ use std::sync::Arc;
 use operit_access_runtime::RemoteDeviceInfo;
 use operit_core_application::{CoreApplication, CoreApplicationConfig};
 use operit_host_api::HostManager::HostManager;
+use operit_host_api::{HostResult, ToastHost};
 #[cfg(target_os = "linux")]
 use operit_host_linux_native::{
     LinuxAudioPlaybackHost as NativeAudioPlaybackHost, LinuxBluetoothHost as NativeBluetoothHost,
@@ -59,6 +60,17 @@ compile_error!("operit2 CLI host is implemented for Windows, Linux, and macOS.")
 
 /// Creates the CLI host manager with the configured runtime and workspace roots.
 pub(crate) fn create_cli_host_manager() -> HostManager {
+    create_cli_host_manager_with_toast_host(Arc::new(console_toast))
+}
+
+/// Writes one non-TUI toast into the active CLI terminal.
+fn console_toast(message: &str) -> HostResult<()> {
+    eprintln!("{message}");
+    Ok(())
+}
+
+/// Creates the CLI host manager with frontend-owned toast presentation.
+fn create_cli_host_manager_with_toast_host(toastHost: Arc<dyn ToastHost>) -> HostManager {
     let storageConfig = CliStorageConfig::read();
     let (runtimeRoot, workspaceRoot) = storageConfig.activeRoots();
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
@@ -82,8 +94,10 @@ pub(crate) fn create_cli_host_manager() -> HostManager {
         runtimeStorageHost,
         runtimeSqliteHost,
     )
+    .withToastHost(toastHost)
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(NativeHttpHost::new()))
+    .withSerialPortHost(Arc::new(operit_host_native_common::NativeSerialPortHost))
     .withArchiveStagingHost(archiveStagingHost)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost);
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
@@ -151,6 +165,22 @@ pub(crate) async fn create_cli_core_application_configured(
     CoreApplication::start(
         CoreApplicationConfig::new(
             create_cli_host_manager(),
+            RemoteDeviceInfo::nativeCli(deviceName),
+        )
+        .withLocalClientConfigurator(configurator),
+    )
+    .await
+}
+
+/// Starts the CLI Core tree with a frontend toast host and local-client configuration.
+pub(crate) async fn create_cli_core_application_configured_with_toast_host(
+    deviceName: &str,
+    toastHost: Arc<dyn ToastHost>,
+    configurator: impl FnOnce(&mut LocalCoreProxy) -> Result<(), String> + Send + 'static,
+) -> Result<CoreApplication, String> {
+    CoreApplication::start(
+        CoreApplicationConfig::new(
+            create_cli_host_manager_with_toast_host(toastHost),
             RemoteDeviceInfo::nativeCli(deviceName),
         )
         .withLocalClientConfigurator(configurator),

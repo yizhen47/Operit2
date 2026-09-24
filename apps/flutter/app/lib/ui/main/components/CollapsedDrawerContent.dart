@@ -6,9 +6,12 @@ import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../data/preferences/UserPreferencesManager.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../layout/SidebarDockController.dart';
+import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import 'NavigationDrawerAppearance.dart';
 
@@ -36,17 +39,35 @@ class CollapsedDrawerContent extends StatelessWidget {
     vertical: 2,
   );
 
+  /// Reads the persisted sidebar mode used to decide workspace inheritance.
+  Future<bool> _shouldInheritWorkspaceFromCurrent() async {
+    final mode = await UserPreferencesManager(
+      clients: GeneratedCoreProxyClients(bridge),
+    ).loadChatHistoryGroupingMode();
+    return switch (mode) {
+      null => false,
+      UserPreferencesManager.CHAT_HISTORY_GROUPING_CHARACTER => false,
+      UserPreferencesManager.CHAT_HISTORY_GROUPING_WORKSPACE => true,
+      _ => throw FormatException(
+        'Unsupported persisted sidebar grouping mode: $mode',
+      ),
+    };
+  }
+
+  /// Creates a conversation using the active sidebar grouping mode.
   Future<void> _createConversation() async {
     // Arm before creating so the intro overlay sees the flag when the new
     // chat id arrives.
     newChatIntroArmed.value = true;
     try {
+      final inheritGroupFromCurrent =
+          await _shouldInheritWorkspaceFromCurrent();
       await GeneratedCoreProxyClients(
         bridge,
       ).chatRuntimeHolderMain.createNewChat(
         characterCardName: null,
         group: null,
-        inheritGroupFromCurrent: true,
+        inheritGroupFromCurrent: inheritGroupFromCurrent,
         setAsCurrentChat: true,
         characterGroupId: null,
       );
@@ -130,17 +151,26 @@ class CollapsedDrawerContent extends StatelessWidget {
                   endIndent: 14,
                   color: appearance.dividerColor,
                 ),
-                for (final entry in pluginEntries)
+                for (var index = 0; index < pluginEntries.length; index++)
                   Padding(
                     padding: _collapsedItemPadding,
                     child: Center(
-                      child: _RoundDrawerButton(
-                        selected: selectedRouteId == entry.routeId,
+                      child: _DockedPluginRoundButton(
+                        entry: pluginEntries[index],
+                        insertionIndex: index,
+                        selected:
+                            selectedRouteId == pluginEntries[index].routeId,
                         appearance: appearance,
-                        icon: entry.icon,
-                        onClick: () => onNavigationEntrySelected(entry),
+                        onClick: () =>
+                            onNavigationEntrySelected(pluginEntries[index]),
                       ),
                     ),
+                  ),
+                if (pluginEntries.isNotEmpty)
+                  SidebarDockEndDropTarget(
+                    controller: SidebarDockScope.maybeOf(context),
+                    location: SidebarDockLocation.primary,
+                    height: 18,
                   ),
               ],
             ],
@@ -655,11 +685,15 @@ class PluginNavigationDrawerItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final dockController =
+        MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+        ? SidebarDockScope.maybeOf(context)
+        : null;
     final shape = BorderRadius.circular(12);
     final contentColor = selected
         ? appearance.selectedContentColor
         : appearance.itemColor;
-    return Padding(
+    final item = Padding(
       padding: const EdgeInsetsDirectional.only(
         start: 12,
         end: _endPadding,
@@ -708,6 +742,80 @@ class PluginNavigationDrawerItem extends StatelessWidget {
           ),
         ),
       ),
+    );
+    if (dockController == null) {
+      return item;
+    }
+    return _PrimarySidebarDragSource(entry: entry, child: item);
+  }
+}
+
+class _PrimarySidebarDragSource extends StatelessWidget {
+  const _PrimarySidebarDragSource({required this.entry, required this.child});
+
+  final NavigationEntrySpec entry;
+  final Widget child;
+
+  /// Builds a primary sidebar drag source and reorder drop target.
+  @override
+  Widget build(BuildContext context) {
+    final controller =
+        MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
+        ? SidebarDockScope.maybeOf(context)
+        : null;
+    if (controller == null) {
+      return child;
+    }
+    return DragTarget<SidebarDockDragPayload>(
+      onWillAcceptWithDetails: (details) {
+        return details.data.entryId != entry.entryId &&
+            controller.canMove(
+              details.data.entryId,
+              SidebarDockLocation.primary,
+            );
+      },
+      onAcceptWithDetails: (details) {
+        final entries = controller.primaryEntries;
+        final index = entries.indexWhere(
+          (candidate) => candidate.entryId == entry.entryId,
+        );
+        controller.move(
+          details.data.entryId,
+          location: SidebarDockLocation.primary,
+          insertionIndex: index < 0 ? entries.length : index,
+        );
+      },
+      builder: (context, candidateData, rejectedData) {
+        final decoratedChild = DecoratedBox(
+          decoration: candidateData.isEmpty
+              ? const BoxDecoration()
+              : BoxDecoration(
+                  border: BorderDirectional(
+                    start: BorderSide(
+                      width: 3,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                ),
+          child: child,
+        );
+        if (!controller.canMove(entry.entryId, SidebarDockLocation.secondary)) {
+          return decoratedChild;
+        }
+        return Draggable<SidebarDockDragPayload>(
+          data: SidebarDockDragPayload(entryId: entry.entryId),
+          feedback: Material(
+            elevation: 8,
+            color: Colors.transparent,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 260),
+              child: Opacity(opacity: 0.92, child: child),
+            ),
+          ),
+          childWhenDragging: Opacity(opacity: 0.32, child: child),
+          child: decoratedChild,
+        );
+      },
     );
   }
 }
@@ -970,6 +1078,7 @@ class _RoundDrawerButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onClick;
 
+  /// Builds the compact plugin drag source and reorder drop target.
   @override
   Widget build(BuildContext context) {
     return SizedBox(
@@ -993,6 +1102,131 @@ class _RoundDrawerButton extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _DockedPluginRoundButton extends StatelessWidget {
+  const _DockedPluginRoundButton({
+    required this.entry,
+    required this.insertionIndex,
+    required this.selected,
+    required this.appearance,
+    required this.onClick,
+  });
+
+  final NavigationEntrySpec entry;
+  final int insertionIndex;
+  final bool selected;
+  final NavigationDrawerAppearance appearance;
+  final VoidCallback onClick;
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = SidebarDockScope.maybeOf(context);
+    final button = _RoundDrawerButton(
+      selected: selected,
+      appearance: appearance,
+      icon: entry.icon,
+      onClick: onClick,
+    );
+    if (controller == null ||
+        !controller.canMove(entry.entryId, SidebarDockLocation.secondary)) {
+      return button;
+    }
+    return DragTarget<SidebarDockDragPayload>(
+      onWillAcceptWithDetails: (details) {
+        return details.data.entryId != entry.entryId &&
+            controller.canMove(
+              details.data.entryId,
+              SidebarDockLocation.primary,
+            );
+      },
+      onAcceptWithDetails: (details) {
+        controller.move(
+          details.data.entryId,
+          location: SidebarDockLocation.primary,
+          insertionIndex: insertionIndex,
+        );
+      },
+      builder: (context, candidateData, rejectedData) {
+        final target = DecoratedBox(
+          decoration: candidateData.isEmpty
+              ? const BoxDecoration()
+              : BoxDecoration(
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  shape: BoxShape.circle,
+                ),
+          child: button,
+        );
+        return Draggable<SidebarDockDragPayload>(
+          data: SidebarDockDragPayload(entryId: entry.entryId),
+          feedback: Material(
+            color: Colors.transparent,
+            child: Opacity(opacity: 0.92, child: button),
+          ),
+          childWhenDragging: Opacity(opacity: 0.32, child: button),
+          child: target,
+        );
+      },
+    );
+  }
+}
+
+class SidebarDockEndDropTarget extends StatelessWidget {
+  const SidebarDockEndDropTarget({
+    super.key,
+    required this.controller,
+    required this.location,
+    this.height = 24,
+    this.onAccepted,
+  });
+
+  final SidebarDockController? controller;
+  final SidebarDockLocation location;
+  final double height;
+  final VoidCallback? onAccepted;
+
+  /// Builds the trailing drop zone for one sidebar list.
+  @override
+  Widget build(BuildContext context) {
+    final dockController = controller;
+    if (dockController == null) {
+      return SizedBox(height: height);
+    }
+    return DragTarget<SidebarDockDragPayload>(
+      onWillAcceptWithDetails: (details) =>
+          dockController.canMove(details.data.entryId, location),
+      onAcceptWithDetails: (details) {
+        final insertionIndex = location == SidebarDockLocation.primary
+            ? dockController.primaryEntries.length
+            : dockController.secondaryViews.length;
+        dockController.move(
+          details.data.entryId,
+          location: location,
+          insertionIndex: insertionIndex,
+        );
+        onAccepted?.call();
+      },
+      builder: (context, candidateData, rejectedData) {
+        return SizedBox(
+          height: height,
+          child: candidateData.isEmpty
+              ? null
+              : DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Theme.of(context).colorScheme.primary,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                ),
+        );
+      },
     );
   }
 }

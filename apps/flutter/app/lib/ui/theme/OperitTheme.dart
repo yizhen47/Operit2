@@ -15,13 +15,14 @@ import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../common/AppToastHost.dart';
 import '../common/RuntimeBootstrapScreen.dart';
 import '../features/chat/tts/TtsFloatingPanel.dart';
 import '../features/startup/PluginLoadingOverlay.dart';
 import '../../core/host/browser/RuntimeBrowserOwnerHost.dart';
 import '../features/chat/components/workspace/browser/automation/WorkspaceWebVisitHost.dart';
-import '../permissions/ToolApprovalHost.dart';
 import 'OperitThemeAssets.dart';
+import 'ThemeCircularRevealHost.dart';
 
 class OperitTheme extends StatefulWidget {
   /// Creates one themed Flutter application root.
@@ -285,19 +286,24 @@ class _OperitMaterialApp extends StatelessWidget {
       theme: _themeData(lightColorScheme, themePreferenceSnapshot),
       darkTheme: _themeData(darkColorScheme, themePreferenceSnapshot),
       themeMode: themeMode,
+      themeAnimationDuration: OperitTheme.of(context).suppressThemeAnimation
+          ? Duration.zero
+          : kThemeAnimationDuration,
       builder: (context, materialChild) {
-        return AnnotatedRegion<SystemUiOverlayStyle>(
-          value: _systemUiOverlayStyle(Theme.of(context).colorScheme),
-          child: _OperitThemeBackground(
-            themePreferenceSnapshot: themePreferenceSnapshot,
-            child: materialChild!,
+        return ThemeCircularRevealHost(
+          child: AnnotatedRegion<SystemUiOverlayStyle>(
+            value: _systemUiOverlayStyle(Theme.of(context).colorScheme),
+            child: _OperitThemeBackground(
+              themePreferenceSnapshot: themePreferenceSnapshot,
+              child: materialChild!,
+            ),
           ),
         );
       },
       home: RuntimeBrowserOwnerHost(
         enabled: hostInteractionHostsEnabled,
         child: WorkspaceWebVisitHost(
-          child: ToolApprovalHost(
+          child: AppToastHost(
             child: Stack(
               fit: StackFit.expand,
               children: <Widget>[
@@ -338,10 +344,12 @@ class OperitThemeController {
   String? _activeCharacterGroupId;
   String? _activeThemeTargetName;
   int _activePromptRevision = 0;
+  bool _suppressThemeAnimation = false;
 
   ThemeMode get themeMode => _themePreferenceSnapshot.themeMode;
   ThemePreferenceSnapshot get themePreferenceSnapshot =>
       _themePreferenceSnapshot;
+  bool get suppressThemeAnimation => _suppressThemeAnimation;
   String get activeThemeTargetName {
     final name = _activeThemeTargetName;
     if (name == null || name.trim().isEmpty) {
@@ -402,7 +410,25 @@ class OperitThemeController {
 
   /// Toggles directly between explicit light and dark modes.
   void toggle(BuildContext context) {
-    unawaited(setThemeMode(isDark(context) ? ThemeMode.light : ThemeMode.dark));
+    final nextMode = isDark(context) ? ThemeMode.light : ThemeMode.dark;
+    final reveal = ThemeCircularRevealHost.maybeOf(context);
+    if (reveal == null) {
+      unawaited(setThemeMode(nextMode));
+      return;
+    }
+    unawaited(
+      reveal.switchTheme(
+        originContext: context,
+        applyTheme: () async {
+          _suppressThemeAnimation = true;
+          try {
+            await setThemeMode(nextMode);
+          } finally {
+            _suppressThemeAnimation = false;
+          }
+        },
+      ),
+    );
   }
 
   /// Persists and applies one theme mode for the active target.

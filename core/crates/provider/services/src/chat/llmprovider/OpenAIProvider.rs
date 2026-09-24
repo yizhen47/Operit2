@@ -2130,6 +2130,12 @@ impl OpenAIProvider {
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             headers.insert(header_name, header_value);
         }
+        if self.provider_type == "OPENAI_CODEX" {
+            crate::chat::llmprovider::OpenAIResponsesProvider::apply_codex_headers(
+                &mut headers,
+                &self.custom_headers,
+            )?;
+        }
         Ok(headers)
     }
 }

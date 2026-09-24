@@ -239,12 +239,14 @@ pub unsafe extern "C" fn operit_flutter_bridge_ffi_connect(
     });
     let descriptor = serde_json::json!({
         "version": 1,
-        "session": Arc::into_raw(session) as usize,
-        "attach": ffi_attach as *const () as usize,
-        "submit": ffi_submit as *const () as usize,
-        "allocate": ffi_allocate as *const () as usize,
-        "free": ffi_free as *const () as usize,
-        "release": ffi_release as *const () as usize,
+        // Addresses cross JSON as strings because JSON numbers cannot represent every
+        // 64-bit pointer exactly on Dart's decoder.
+        "session": (Arc::into_raw(session) as usize).to_string(),
+        "attach": (ffi_attach as *const () as usize).to_string(),
+        "submit": (ffi_submit as *const () as usize).to_string(),
+        "allocate": (ffi_allocate as *const () as usize).to_string(),
+        "free": (ffi_free as *const () as usize).to_string(),
+        "release": (ffi_release as *const () as usize).to_string(),
     });
     CString::new(descriptor.to_string())
         .expect("FFI descriptor JSON")

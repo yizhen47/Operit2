@@ -221,7 +221,11 @@ pub const RUNTIME_SHARE_IMAGE_EXPORTS_DIR_PATH: &str = RUNTIME_SHARE_IMAGE_EXPOR
 pub const EXTENSIONS_SKILLS: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree("runtime/extensions/skills", RuntimeStorageOwnership::Space);
 pub const EXTENSIONS_SKILLS_DIR_PATH: &str = EXTENSIONS_SKILLS.path;
-pub const EXTENSIONS_PACKAGES_DIR_PATH: &str = "runtime/extensions/packages";
+pub const EXTENSIONS_PACKAGES: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/extensions/packages",
+    RuntimeStorageOwnership::Space,
+);
+pub const EXTENSIONS_PACKAGES_DIR_PATH: &str = EXTENSIONS_PACKAGES.path;
 pub const EXTENSIONS_PLUGIN_CONFIGS: RuntimeStoragePathDefinition =
     RuntimeStoragePathDefinition::tree(
         "runtime/extensions/plugins/configs",
@@ -311,6 +315,8 @@ pub const ENV_PREFERENCES_PATH: &str =
     "runtime/config/preferences/env_preferences.preferences.json";
 pub const GITHUB_AUTH_PREFERENCES_PATH: &str =
     "runtime/config/preferences/github_auth_preferences.json";
+pub const CODEX_AUTH_PREFERENCES_PATH: &str =
+    "runtime/config/preferences/codex_auth_preferences.json";
 pub const CHARACTER_CARDS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/character_cards.preferences.json";
 pub const CHARACTER_GROUPS_PREFERENCES_PATH: &str =
@@ -388,6 +394,7 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RUNTIME_CLIENT_LOG,
     RUNTIME_SHARE_IMAGE_EXPORTS,
     EXTENSIONS_SKILLS,
+    EXTENSIONS_PACKAGES,
     EXTENSIONS_PLUGIN_CONFIGS,
     RUNTIME_CLEAN_ON_EXIT,
     RUNTIME_SYNC,
@@ -467,6 +474,10 @@ mod tests {
         );
         assert_eq!(
             runtimeStorageOwnership("runtime/extensions/skills/example/SKILL.md").unwrap(),
+            RuntimeStorageOwnership::Space
+        );
+        assert_eq!(
+            runtimeStorageOwnership("runtime/extensions/packages/example.js").unwrap(),
             RuntimeStorageOwnership::Space
         );
         assert_eq!(

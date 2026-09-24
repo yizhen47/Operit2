@@ -22,8 +22,8 @@ use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerToolPermissionAsync, RuntimeHostInteractionToolPermissionPayload,
-    RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
+    requestChatToolPermissionAsync, RuntimeHostInteractionToolPermissionTool,
+    RuntimeHostInteractionToolPermissionToolParameter,
 };
 use operit_store::CoreNodeBindingStore::CoreNodeBindingStore;
 use operit_store::NetworkControlStore::{NetworkControlIdentityAssignment, NetworkControlRole};
@@ -41,6 +41,8 @@ pub(crate) async fn run_link_command(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str) {
         Some("serve") => run_link_serve_command(&args[1..]).await,
         Some("discover") => run_link_discover_command(&args[1..]).await,
+        Some("pair-start") => run_link_pair_start_command(&args[1..]).await,
+        Some("pair-finish") => run_link_pair_finish_command(&args[1..]).await,
         Some("connect") => run_link_connect_command(&args[1..]).await,
         Some("space") => run_link_space_command(&args[1..]).await,
         Some("control") => run_link_control_command(&args[1..]).await,
@@ -127,19 +129,21 @@ pub(crate) fn install_link_permission_requester(core: &mut operit_proxy_local::L
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
-        .setAsyncPermissionRequester(move |tool, description| async move {
-            let response = requestOwnerToolPermissionAsync(
-                RuntimeHostInteractionToolPermissionPayload {
-                    tool: tool_to_permission_payload(&tool),
-                    description,
-                },
+        .setAsyncPermissionRequester(move |tool, description, chatId| async move {
+            let Some(chatId) = chatId else {
+                return PermissionRequestResult::DENY;
+            };
+            let response = requestChatToolPermissionAsync(
+                chatId,
+                tool_to_permission_payload(&tool),
+                description,
                 Duration::from_secs(60),
             )
             .await
             .expect("permission request failed");
-            match response.result.as_str() {
+            match response.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,
-                "always_allow" => PermissionRequestResult::ALLOW_SESSION,
+                "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
                 other => panic!("unknown permission response result: {other}"),
             }
@@ -240,11 +244,78 @@ async fn run_link_connect_command(args: &[String]) -> Result<(), String> {
     }
     io::stdout().flush().map_err(|error| error.to_string())?;
     let mut code = String::new();
-    io::stdin()
+    let bytes_read = io::stdin()
         .read_line(&mut code)
         .map_err(|error| error.to_string())?;
+    if bytes_read == 0 {
+        return Err(
+            "pairing code input reached EOF; use pair-start and pair-finish for non-interactive use"
+                .to_string(),
+        );
+    }
     let mut session = service
         .finishPairedRemote(pairing.pairingId, code.trim().to_string(), name.clone())
+        .await?;
+    if let Some(transport) = transport {
+        session = service.setPairedRemoteTransport(name.clone(), transport)?;
+    }
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({
+            "name": name,
+            "pairedDevice": session.remoteDeviceInfo.displayName(),
+            "deviceId": session.coreDeviceId,
+            "localDeviceId": session.deviceId,
+            "transport": link_transport_name(&session.transport),
+        }));
+    } else {
+        println!("Paired device {}", session.remoteDeviceInfo.displayName());
+        println!("Saved as: {name}");
+        println!("Join its device space with: operit2 cli link space join {name}");
+    }
+    Ok(())
+}
+
+/// Starts a pairing transaction and persists its client-side state for a later finish command.
+async fn run_link_pair_start_command(args: &[String]) -> Result<(), String> {
+    const USAGE: &str = "usage: operit2 cli link pair-start <url> --token <token>";
+    let (url, token) = parse_remote_url_token(args, USAGE)?;
+    let token_hash = link_token_hash(&token);
+    let coreApplication = create_cli_core_application("client").await?;
+    let pairing = coreApplication
+        .accessServices()
+        .startPairedRemote(url, token_hash, RemoteDeviceInfo::nativeCli("client"))
+        .await?;
+    if cli_json_mode() {
+        emit_cli_json(serde_json::json!({
+            "pairingId": pairing.pairingId,
+            "pairedDevice": pairing.coreDeviceInfo.displayName(),
+            "deviceId": pairing.coreDeviceId,
+            "userName": pairing.coreUserName,
+        }));
+    } else {
+        println!(
+            "Pairing started with {}",
+            pairing.coreDeviceInfo.displayName()
+        );
+        println!("Pairing ID: {}", pairing.pairingId);
+        println!("Read the pairing code from the server terminal.");
+        println!(
+            "Finish with: operit2 cli link pair-finish {} --code <pairing-code> --save <name>",
+            pairing.pairingId
+        );
+    }
+    Ok(())
+}
+
+/// Finishes a persisted pairing transaction and saves the resulting named session.
+async fn run_link_pair_finish_command(args: &[String]) -> Result<(), String> {
+    const USAGE: &str =
+        "usage: operit2 cli link pair-finish <pairing-id> --code <pairing-code> --save <name> [--transport <http|ws>]";
+    let (pairing_id, pairing_code, name, transport) = parse_pair_finish_args(args, USAGE)?;
+    let coreApplication = create_cli_core_application("client").await?;
+    let service = coreApplication.accessServices();
+    let mut session = service
+        .finishPairedRemote(pairing_id, pairing_code, name.clone())
         .await?;
     if let Some(transport) = transport {
         session = service.setPairedRemoteTransport(name.clone(), transport)?;
@@ -980,6 +1051,44 @@ fn parse_remote_url_token_save(
     ))
 }
 
+/// Parses the pairing identifier, code, session name, and transport options.
+fn parse_pair_finish_args(
+    args: &[String],
+    usage: &str,
+) -> Result<(String, String, String, Option<LinkTransportPreference>), String> {
+    let pairing_id = args.get(0).ok_or_else(|| usage.to_string())?.clone();
+    let mut pairing_code = None::<String>;
+    let mut save_name = None::<String>;
+    let mut transport = None::<LinkTransportPreference>;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--code" => {
+                index += 1;
+                pairing_code = Some(args.get(index).ok_or_else(|| usage.to_string())?.clone());
+            }
+            "--save" => {
+                index += 1;
+                save_name = Some(args.get(index).ok_or_else(|| usage.to_string())?.clone());
+            }
+            "--transport" => {
+                index += 1;
+                transport = Some(parse_link_transport(
+                    args.get(index).ok_or_else(|| usage.to_string())?,
+                )?);
+            }
+            _ => return Err(usage.to_string()),
+        }
+        index += 1;
+    }
+    Ok((
+        pairing_id,
+        pairing_code.ok_or_else(|| usage.to_string())?,
+        save_name.ok_or_else(|| usage.to_string())?,
+        transport,
+    ))
+}
+
 /// Parses the explicit Link carrier selection accepted by the CLI.
 fn parse_link_transport(value: &str) -> Result<LinkTransportPreference, String> {
     match value {
@@ -1121,13 +1230,15 @@ fn remove_link_server_session(
 fn print_link_usage() {
     if cli_json_mode() {
         emit_cli_json(
-            serde_json::json!({ "usage": "operit2 cli link <serve|discover|hello|connect|space|sessions|transport|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>" }),
+            serde_json::json!({ "usage": "operit2 cli link <serve|discover|hello|pair-start|pair-finish|connect|space|sessions|transport|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>" }),
         );
         return;
     }
     println!("operit2 cli link serve [--bind <addr:port>] [--token <token>]");
     println!("operit2 cli link discover [--timeout-ms <ms>]");
     println!("operit2 cli link hello <url> --token <token>");
+    println!("operit2 cli link pair-start <url> --token <token>");
+    println!("operit2 cli link pair-finish <pairing-id> --code <pairing-code> --save <name> [--transport <http|ws>]");
     println!(
         "operit2 cli link connect <url> --token <token> --save <name> [--transport <http|ws>]"
     );

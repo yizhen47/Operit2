@@ -2318,6 +2318,78 @@ abstract class AppLocalizations {
   /// **'API key'**
   String get settingsModelApiKey;
 
+  /// No description provided for @settingsModelCodexLogin.
+  ///
+  /// In en, this message translates to:
+  /// **'ChatGPT login'**
+  String get settingsModelCodexLogin;
+
+  /// No description provided for @settingsModelCodexLoginTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in to ChatGPT Codex'**
+  String get settingsModelCodexLoginTitle;
+
+  /// No description provided for @settingsModelCodexLoginDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'OpenAI Codex uses a ChatGPT subscription sign-in instead of an API key.'**
+  String get settingsModelCodexLoginDescription;
+
+  /// No description provided for @settingsModelCodexSignedIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Signed in as {account}'**
+  String settingsModelCodexSignedIn(String account);
+
+  /// No description provided for @settingsModelCodexSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Not signed in to ChatGPT'**
+  String get settingsModelCodexSignedOut;
+
+  /// No description provided for @settingsModelCodexBrowser.
+  ///
+  /// In en, this message translates to:
+  /// **'Browser sign-in'**
+  String get settingsModelCodexBrowser;
+
+  /// No description provided for @settingsModelCodexDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Device code'**
+  String get settingsModelCodexDevice;
+
+  /// No description provided for @settingsModelCodexWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for ChatGPT authorization…'**
+  String get settingsModelCodexWaiting;
+
+  /// No description provided for @settingsModelCodexDeviceInstructions.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter this code on the opened page, then return to Operit.'**
+  String get settingsModelCodexDeviceInstructions;
+
+  /// No description provided for @settingsModelCodexOpenPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Open verification page'**
+  String get settingsModelCodexOpenPage;
+
+  /// No description provided for @settingsModelCodexLogout.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out'**
+  String get settingsModelCodexLogout;
+
+  /// No description provided for @settingsModelCodexLoginFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'ChatGPT sign-in failed: {error}'**
+  String settingsModelCodexLoginFailed(String error);
+
   /// No description provided for @settingsModelApiKeyPool.
   ///
   /// In en, this message translates to:
@@ -6633,6 +6705,12 @@ abstract class AppLocalizations {
   /// **'Use the network'**
   String get settingsRuntimeControlCapabilityNetworkUser;
 
+  /// No description provided for @settingsRuntimeControlCapabilityChatRead.
+  ///
+  /// In en, this message translates to:
+  /// **'Read chat history'**
+  String get settingsRuntimeControlCapabilityChatRead;
+
   /// No description provided for @settingsRuntimeControlCapabilityViewDevices.
   ///
   /// In en, this message translates to:
@@ -6644,6 +6722,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Approve authorizations'**
   String get settingsRuntimeControlCapabilityApproval;
+
+  /// No description provided for @chatRoutePermissionDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Permission denied: target device {targetNodeId} lacks the {capability} capability.'**
+  String chatRoutePermissionDenied(Object targetNodeId, Object capability);
 
   /// No description provided for @settingsRuntimeControlRoleAdministrator.
   ///

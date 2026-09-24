@@ -913,7 +913,7 @@ class _ChatAreaState extends State<ChatArea>
     }
     final viewportContext = _viewportKey.currentContext;
     final viewportBox = viewportContext?.findRenderObject() as RenderBox?;
-    if (viewportBox == null) {
+    if (viewportBox == null || !viewportBox.attached) {
       return;
     }
     final anchors = <int, ChatScrollMessageAnchor>{};
@@ -922,7 +922,7 @@ class _ChatAreaState extends State<ChatArea>
       final key = _keyForMessage(message.timestamp);
       final rowContext = key.currentContext;
       final rowBox = rowContext?.findRenderObject() as RenderBox?;
-      if (rowBox == null || !rowBox.hasSize) {
+      if (rowBox == null || !rowBox.attached || !rowBox.hasSize) {
         continue;
       }
       final localTop = rowBox

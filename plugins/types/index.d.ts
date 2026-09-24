@@ -6,7 +6,7 @@
  */
 
 // Import types that will be used in global declarations
-import { ToolReturnType, NativeInterface as CoreNativeInterface } from './core';
+import { ToolReturnType, ToolCatalogEntry, NativeInterface as CoreNativeInterface } from './core';
 import {
     JavaBridgeApi as JavaBridgeApiType,
     JavaBridgeClass as JavaBridgeClassType,
@@ -220,6 +220,9 @@ declare global {
     function toolCall<T extends string, TIntermediate = unknown>(toolType: string, toolName: T, toolParams: ToolParams | undefined, options: ToolCallOptions<TIntermediate>): Promise<ToolReturnType<T>>;
     function toolCall<T extends string, TIntermediate = unknown>(toolName: T, toolParams: ToolParams | undefined, options: ToolCallOptions<TIntermediate>): Promise<ToolReturnType<T>>;
     function toolCall(toolName: string): Promise<any>;
+
+    /** Returns the current executable tool catalog from the host runtime. */
+    function getToolCatalog(): { tools: ToolCatalogEntry[] };
 
     // Complete function
     function complete<T>(result: T): void;

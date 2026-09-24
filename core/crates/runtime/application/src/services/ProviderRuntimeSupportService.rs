@@ -240,6 +240,24 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
             .map_err(|error| error.to_string())
     }
 
+    /// Returns the saved ChatGPT Codex session.
+    fn loadCodexTokens(
+        &self,
+    ) -> Result<operit_providers::chat::llmprovider::CodexOAuth::CodexOAuthTokens, String> {
+        crate::data::preferences::CodexAuthPreferences::CodexAuthPreferences::getInstance()
+            .load()?
+            .ok_or_else(|| "Codex authorization is required".to_string())
+    }
+
+    /// Persists a refreshed ChatGPT Codex session.
+    fn saveCodexTokens(
+        &self,
+        tokens: operit_providers::chat::llmprovider::CodexOAuth::CodexOAuthTokens,
+    ) -> Result<(), String> {
+        crate::data::preferences::CodexAuthPreferences::CodexAuthPreferences::getInstance()
+            .save(&tokens)
+    }
+
     /// Returns a provider profile by id.
     fn providerProfile(
         &self,

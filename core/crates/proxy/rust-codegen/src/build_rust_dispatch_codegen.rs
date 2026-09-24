@@ -203,6 +203,7 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
     let mut output = String::new();
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_call(proxy: &LocalCoreProxy, request: operit_link::CoreCallRequest) -> Result<operit_link::CoreValue, operit_link::CoreLinkError> {\n");
+    output.push_str("    if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {\n        if __core_route_runtime.shouldRoute(&request.methodName, &request.args)? {\n            return __core_route_runtime.call(request).await.result;\n        }\n    }\n");
     output.push_str("    #[cfg(not(target_arch = \"wasm32\"))]\n");
     let application_id = objects
         .iter()
@@ -252,8 +253,14 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
         };
+        let holder_lookup = render_resolved_holder_lookup(
+            object,
+            resolver_method,
+            "request.targetObjectId",
+            "            ",
+        );
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            return {};\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = {holder_lookup} {{\n            return {};\n        }}\n    }}\n",
             object.dispatch_name,
             render_direct_call_dispatch_expression(object, "object", "request", "            ")
         ));
@@ -300,12 +307,19 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_watch_snapshot_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEvent, operit_link::CoreLinkError> {\n");
+    output.push_str("    if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {\n        if __core_route_runtime.shouldRouteWatch(&request.propertyName, &request.args)? {\n            return operit_link::coreRouteWatchSnapshot(__core_route_runtime, request).await;\n        }\n    }\n");
     for object in objects {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
         };
+        let holder_lookup = render_resolved_holder_lookup(
+            object,
+            resolver_method,
+            "request.targetObjectId",
+            "        ",
+        );
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            let value = generated_dispatch_{}_watch_snapshot_async(object, &request).await?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = {holder_lookup} {{\n            let value = generated_dispatch_{}_watch_snapshot_async(object, &request).await?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
             object.dispatch_name,
             object.dispatch_name
         ));
@@ -319,18 +333,34 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             application.object_id, application.dispatch_name
         ));
     }
+    for object in objects
+        .iter()
+        .filter(|object| matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
+    {
+        output.push_str(&render_async_factory_watch(
+            object,
+            DispatchMode::WatchSnapshot,
+        ));
+    }
     output.push_str("    generated_dispatch_core_proxy_watch_snapshot(proxy, request)\n");
     output.push_str("}\n\n");
 
     output.push_str("#[allow(unused_mut, unused_variables)]\n");
     output.push_str("async fn generated_dispatch_core_proxy_watch_async(proxy: &LocalCoreProxy, request: operit_link::CoreWatchRequest) -> Result<operit_link::CoreEventStream, operit_link::CoreLinkError> {\n");
     output.push_str("    if request.targetObjectId == operit_link::CORE_STREAM_POOL_OBJECT_ID {\n        return proxy.openCoreStreamWatch(request);\n    }\n");
+    output.push_str("    if let Some(__core_route_runtime) = operit_link::coreRouteRuntime() {\n        if __core_route_runtime.shouldRouteWatch(&request.propertyName, &request.args)? {\n            return __core_route_runtime.watch(request).await;\n        }\n    }\n");
     for object in objects {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
         };
+        let holder_lookup = render_resolved_holder_lookup(
+            object,
+            resolver_method,
+            "request.targetObjectId",
+            "        ",
+        );
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            return generated_dispatch_{}_watch_async(object, request, proxy.streamAttachmentAdopter()).await;\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.lock().await;\n        if let Some(object) = {holder_lookup} {{\n            return generated_dispatch_{}_watch_async(object, request, proxy.streamAttachmentAdopter()).await;\n        }}\n    }}\n",
             object.dispatch_name,
             object.dispatch_name
         ));
@@ -344,6 +374,12 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
             application.object_id, application.dispatch_name
         ));
     }
+    for object in objects
+        .iter()
+        .filter(|object| matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }))
+    {
+        output.push_str(&render_async_factory_watch(object, DispatchMode::Watch));
+    }
     output.push_str("    generated_dispatch_core_proxy_watch(proxy, request)\n");
     output.push_str("}\n\n");
 
@@ -353,8 +389,14 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
         };
+        let holder_lookup = render_resolved_holder_lookup(
+            object,
+            resolver_method,
+            "request.targetObjectId",
+            "        ",
+        );
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Resolved holder is busy\"))?;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            let value = generated_dispatch_{}_watch_snapshot(object, &request)?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let propertyName = request.propertyName.clone();\n        let mut holder = proxy.{holder_field}.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Resolved holder is busy\"))?;\n        if let Some(object) = {holder_lookup} {{\n            let value = generated_dispatch_{}_watch_snapshot(object, &request)?;\n            return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n        }}\n    }}\n",
             object.dispatch_name,
             object.dispatch_name
         ));
@@ -413,8 +455,14 @@ pub(crate) fn render_core_proxy_dispatch(objects: &[SourceObject]) -> String {
         let Some((holder_field, resolver_method)) = resolved_holder_metadata(&object.access) else {
             continue;
         };
+        let holder_lookup = render_resolved_holder_lookup(
+            object,
+            resolver_method,
+            "request.targetObjectId",
+            "        ",
+        );
         output.push_str(&format!(
-            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Resolved holder is busy\"))?;\n        if let Some(object) = holder.{resolver_method}(request.targetObjectId) {{\n            return generated_dispatch_{}_watch(object, request, attachmentAdopter.clone());\n        }}\n    }}\n",
+            "    if generated_object_id_matches_{}(request.targetObjectId) {{\n        let mut holder = proxy.{holder_field}.try_lock().map_err(|_| operit_link::CoreLinkError::internal(\"Resolved holder is busy\"))?;\n        if let Some(object) = {holder_lookup} {{\n            return generated_dispatch_{}_watch(object, request, attachmentAdopter.clone());\n        }}\n    }}\n",
             object.dispatch_name,
             object.dispatch_name
         ));
@@ -531,6 +579,27 @@ fn render_string_constructible_dispatch(object: &SourceObject, mode: DispatchMod
     )
 }
 
+/// Resolves factory parents asynchronously before establishing a synchronous watch.
+fn render_async_factory_watch(object: &SourceObject, mode: DispatchMode) -> String {
+    let constructor = render_object_constructor(object, DispatchMode::Call);
+    let dispatch = render_constructed_dispatch(object, mode);
+    let body = match mode {
+        DispatchMode::WatchSnapshot => format!(
+            "        let propertyName = request.propertyName.clone();\n        let value = {{\n{dispatch}        }};\n        return Ok(operit_link::CoreEvent {{ requestId: Some(request.requestId), targetObjectId: request.targetObjectId, propertyName, kind: operit_link::CoreEventKind::Snapshot, value }});\n"
+        ),
+        DispatchMode::Watch => format!(
+            "        let attachmentAdopter = proxy.streamAttachmentAdopter();\n        return {{\n{dispatch}        }};\n"
+        ),
+        DispatchMode::Call => unreachable!("factory watch requires a watch dispatch mode"),
+    };
+    format!(
+        "{}    if request.targetObjectId == {} {{\n{constructor}{body}    }}\n",
+        render_object_item_cfg_attrs(object),
+        object.object_id
+    )
+}
+
+/// Renders a factory dispatch arm for the selected protocol operation.
 fn render_factory_constructible_dispatch(object: &SourceObject, mode: DispatchMode) -> String {
     if !matches!(object.access, ObjectAccess::FactoryMethodConstruct { .. }) {
         return String::new();
@@ -845,6 +914,25 @@ fn resolved_holder_metadata(access: &ObjectAccess) -> Option<(&str, &str)> {
         } => Some((holder_field.as_str(), resolver_method.as_str())),
         _ => None,
     }
+}
+
+/// Renders the holder lookup used by generated proxy dispatch.
+///
+/// Detached chat windows bind the same generated object schema as the main
+/// window, so their slot identity is carried in `__core_instance_id` rather
+/// than in the numeric generated object id.
+fn render_resolved_holder_lookup(
+    object: &SourceObject,
+    resolver_method: &str,
+    object_id: &str,
+    indent: &str,
+) -> String {
+    if object.schema_key != "chatRuntimeHolderMain" {
+        return format!("holder.{resolver_method}({object_id})");
+    }
+    format!(
+        "{{\n{indent}    let mut __core_args = operit_rslink_runtime::object_args(request.args.clone())?;\n{indent}    let __core_instance_id: Option<String> = operit_rslink_runtime::decode_core_arg(&mut __core_args, \"__core_instance_id\")?;\n{indent}    match __core_instance_id {{\n{indent}        Some(instance_id) => holder.coreForInstanceId(instance_id),\n{indent}        None => holder.{resolver_method}({object_id}),\n{indent}    }}\n{indent}}}"
+    )
 }
 
 /// Renders the generated call expression for one already resolved object.

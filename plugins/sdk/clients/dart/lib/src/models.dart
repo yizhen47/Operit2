@@ -552,6 +552,41 @@ class ToolPkgAppLifecycleHookRuntime {
   final String? functionSource;
 }
 
+/// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgChatComposerSlotRuntime`.
+class ToolPkgChatComposerSlotRuntime {
+  const ToolPkgChatComposerSlotRuntime({
+    required this.id,
+    required this.slot,
+    required this.screen,
+    required this.order,
+    required this.keepAlive,
+  });
+
+  /// Decodes `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgChatComposerSlotRuntime` from a MessagePack value map.
+  factory ToolPkgChatComposerSlotRuntime.fromMessagePackValue(Map<String, Object?> value) => ToolPkgChatComposerSlotRuntime(
+    id: value['id'] as String,
+    slot: value['slot'] as String,
+    screen: value['screen'] as String,
+    order: (value['order'] as num).toInt(),
+    keepAlive: value['keepAlive'] as bool,
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'id': id,
+    'slot': slot,
+    'screen': screen,
+    'order': order,
+    'keepAlive': keepAlive,
+  };
+
+  final String id;
+  final String slot;
+  final String screen;
+  final int order;
+  final bool keepAlive;
+}
+
 /// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgChatMessageMenuDialogRuntime`.
 class ToolPkgChatMessageMenuDialogRuntime {
   const ToolPkgChatMessageMenuDialogRuntime({
@@ -631,6 +666,8 @@ class ToolPkgContainerRuntime {
     required this.version,
     required this.apiVersion,
     required this.requires,
+    required this.dependencyIssues,
+    required this.manifestExtensions,
     required this.author,
     required this.mainEntry,
     required this.sourceType,
@@ -642,6 +679,7 @@ class ToolPkgContainerRuntime {
     required this.workspaceTemplates,
     required this.uiModules,
     required this.uiRoutes,
+    required this.chatComposerSlots,
     required this.navigationEntries,
     required this.desktopWidgets,
     required this.appLifecycleHooks,
@@ -663,7 +701,9 @@ class ToolPkgContainerRuntime {
     required this.promptFinalizeHooks,
     required this.promptEstimateFinalizeHooks,
     required this.summaryGenerateHooks,
+    required this.coreCommands,
     required this.aiProviders,
+    required this.manifestExtensionHandlers,
     required this.logoResource,
     required this.marketOrigin,
   });
@@ -676,6 +716,8 @@ class ToolPkgContainerRuntime {
     version: value['version'] as String,
     apiVersion: value['apiVersion'] as String,
     requires: (value['requires'] as List<Object?>).map((item) => ToolPkgManifestRequirement.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    dependencyIssues: (value['dependencyIssues'] as List<Object?>).map((item) => ToolPkgDependencyIssue.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    manifestExtensions: (value['manifestExtensions'] as Map).map((key, item) => MapEntry(key as String, item)),
     author: (value['author'] as List<Object?>).map((item) => item as String).toList(growable: false),
     mainEntry: value['mainEntry'] as String,
     sourceType: ToolPkgSourceType.fromMessagePackValue(value['sourceType'] as Map<String, Object?>),
@@ -687,6 +729,7 @@ class ToolPkgContainerRuntime {
     workspaceTemplates: (value['workspaceTemplates'] as List<Object?>).map((item) => ToolPkgWorkspaceTemplateRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     uiModules: (value['uiModules'] as List<Object?>).map((item) => ToolPkgUiModuleRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     uiRoutes: (value['uiRoutes'] as List<Object?>).map((item) => ToolPkgUiRouteRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    chatComposerSlots: (value['chatComposerSlots'] as List<Object?>).map((item) => ToolPkgChatComposerSlotRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     navigationEntries: (value['navigationEntries'] as List<Object?>).map((item) => ToolPkgNavigationEntryRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     desktopWidgets: (value['desktopWidgets'] as List<Object?>).map((item) => ToolPkgDesktopWidgetRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     appLifecycleHooks: (value['appLifecycleHooks'] as List<Object?>).map((item) => ToolPkgAppLifecycleHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
@@ -708,7 +751,9 @@ class ToolPkgContainerRuntime {
     promptFinalizeHooks: (value['promptFinalizeHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     promptEstimateFinalizeHooks: (value['promptEstimateFinalizeHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     summaryGenerateHooks: (value['summaryGenerateHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    coreCommands: (value['coreCommands'] as List<Object?>).map((item) => ToolPkgCoreCommandRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     aiProviders: (value['aiProviders'] as List<Object?>).map((item) => ToolPkgAiProviderRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    manifestExtensionHandlers: (value['manifestExtensionHandlers'] as List<Object?>).map((item) => ToolPkgRegisteredManifestExtension.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     logoResource: value['logoResource'] == null ? null : ToolPkgResourceRuntime.fromMessagePackValue(value['logoResource'] as Map<String, Object?>),
     marketOrigin: value['marketOrigin'] == null ? null : ToolPkgMarketOrigin.fromMessagePackValue(value['marketOrigin'] as Map<String, Object?>),
   );
@@ -721,6 +766,8 @@ class ToolPkgContainerRuntime {
     'version': version,
     'apiVersion': apiVersion,
     'requires': requires.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'dependencyIssues': dependencyIssues.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'manifestExtensions': manifestExtensions.map((key, item) => MapEntry(key, item)),
     'author': author.map((item) => item).toList(growable: false),
     'mainEntry': mainEntry,
     'sourceType': sourceType.toMessagePackValue(),
@@ -732,6 +779,7 @@ class ToolPkgContainerRuntime {
     'workspaceTemplates': workspaceTemplates.map((item) => item.toMessagePackValue()).toList(growable: false),
     'uiModules': uiModules.map((item) => item.toMessagePackValue()).toList(growable: false),
     'uiRoutes': uiRoutes.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'chatComposerSlots': chatComposerSlots.map((item) => item.toMessagePackValue()).toList(growable: false),
     'navigationEntries': navigationEntries.map((item) => item.toMessagePackValue()).toList(growable: false),
     'desktopWidgets': desktopWidgets.map((item) => item.toMessagePackValue()).toList(growable: false),
     'appLifecycleHooks': appLifecycleHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
@@ -753,7 +801,9 @@ class ToolPkgContainerRuntime {
     'promptFinalizeHooks': promptFinalizeHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'promptEstimateFinalizeHooks': promptEstimateFinalizeHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'summaryGenerateHooks': summaryGenerateHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'coreCommands': coreCommands.map((item) => item.toMessagePackValue()).toList(growable: false),
     'aiProviders': aiProviders.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'manifestExtensionHandlers': manifestExtensionHandlers.map((item) => item.toMessagePackValue()).toList(growable: false),
     'logoResource': logoResource == null ? null : logoResource!.toMessagePackValue(),
     'marketOrigin': marketOrigin == null ? null : marketOrigin!.toMessagePackValue(),
   };
@@ -764,6 +814,8 @@ class ToolPkgContainerRuntime {
   final String version;
   final String apiVersion;
   final List<ToolPkgManifestRequirement> requires;
+  final List<ToolPkgDependencyIssue> dependencyIssues;
+  final Map<String, Object?> manifestExtensions;
   final List<String> author;
   final String mainEntry;
   final ToolPkgSourceType sourceType;
@@ -775,6 +827,7 @@ class ToolPkgContainerRuntime {
   final List<ToolPkgWorkspaceTemplateRuntime> workspaceTemplates;
   final List<ToolPkgUiModuleRuntime> uiModules;
   final List<ToolPkgUiRouteRuntime> uiRoutes;
+  final List<ToolPkgChatComposerSlotRuntime> chatComposerSlots;
   final List<ToolPkgNavigationEntryRuntime> navigationEntries;
   final List<ToolPkgDesktopWidgetRuntime> desktopWidgets;
   final List<ToolPkgAppLifecycleHookRuntime> appLifecycleHooks;
@@ -796,9 +849,93 @@ class ToolPkgContainerRuntime {
   final List<ToolPkgFunctionHookRuntime> promptFinalizeHooks;
   final List<ToolPkgFunctionHookRuntime> promptEstimateFinalizeHooks;
   final List<ToolPkgFunctionHookRuntime> summaryGenerateHooks;
+  final List<ToolPkgCoreCommandRuntime> coreCommands;
   final List<ToolPkgAiProviderRuntime> aiProviders;
+  final List<ToolPkgRegisteredManifestExtension> manifestExtensionHandlers;
   final ToolPkgResourceRuntime? logoResource;
   final ToolPkgMarketOrigin? marketOrigin;
+}
+
+/// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgCoreCommandRuntime`.
+class ToolPkgCoreCommandRuntime {
+  const ToolPkgCoreCommandRuntime({
+    required this.id,
+    required this.name,
+    required this.title,
+    required this.description,
+    required this.usage,
+    required this.function,
+    required this.functionSource,
+  });
+
+  /// Decodes `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgCoreCommandRuntime` from a MessagePack value map.
+  factory ToolPkgCoreCommandRuntime.fromMessagePackValue(Map<String, Object?> value) => ToolPkgCoreCommandRuntime(
+    id: value['id'] as String,
+    name: value['name'] as String,
+    title: LocalizedText.fromMessagePackValue(value['title'] as Map<String, Object?>),
+    description: LocalizedText.fromMessagePackValue(value['description'] as Map<String, Object?>),
+    usage: value['usage'] as String,
+    function: value['function'] as String,
+    functionSource: value['functionSource'] == null ? null : value['functionSource'] as String,
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'id': id,
+    'name': name,
+    'title': title.toMessagePackValue(),
+    'description': description.toMessagePackValue(),
+    'usage': usage,
+    'function': function,
+    'functionSource': functionSource == null ? null : functionSource!,
+  };
+
+  final String id;
+  final String name;
+  final LocalizedText title;
+  final LocalizedText description;
+  final String usage;
+  final String function;
+  final String? functionSource;
+}
+
+/// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgDependencyIssue`.
+class ToolPkgDependencyIssue {
+  const ToolPkgDependencyIssue({
+    required this.id,
+    required this.code,
+    required this.requiredMinVersion,
+    required this.requiredMaxVersion,
+    required this.installedVersion,
+    required this.enabled,
+  });
+
+  /// Decodes `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgDependencyIssue` from a MessagePack value map.
+  factory ToolPkgDependencyIssue.fromMessagePackValue(Map<String, Object?> value) => ToolPkgDependencyIssue(
+    id: value['id'] as String,
+    code: value['code'] as String,
+    requiredMinVersion: value['requiredMinVersion'] == null ? null : value['requiredMinVersion'] as String,
+    requiredMaxVersion: value['requiredMaxVersion'] == null ? null : value['requiredMaxVersion'] as String,
+    installedVersion: value['installedVersion'] == null ? null : value['installedVersion'] as String,
+    enabled: value['enabled'] as bool,
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'id': id,
+    'code': code,
+    'requiredMinVersion': requiredMinVersion == null ? null : requiredMinVersion!,
+    'requiredMaxVersion': requiredMaxVersion == null ? null : requiredMaxVersion!,
+    'installedVersion': installedVersion == null ? null : installedVersion!,
+    'enabled': enabled,
+  };
+
+  final String id;
+  final String code;
+  final String? requiredMinVersion;
+  final String? requiredMaxVersion;
+  final String? installedVersion;
+  final bool enabled;
 }
 
 /// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgDesktopWidgetRuntime`.
@@ -1040,6 +1177,33 @@ class ToolPkgNavigationEntryRuntime {
   final ToolPkgNavigationActionHookRuntime? action;
   final String? icon;
   final int order;
+}
+
+/// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredManifestExtension`.
+class ToolPkgRegisteredManifestExtension {
+  const ToolPkgRegisteredManifestExtension({
+    required this.key,
+    required this.function,
+    required this.functionSource,
+  });
+
+  /// Decodes `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredManifestExtension` from a MessagePack value map.
+  factory ToolPkgRegisteredManifestExtension.fromMessagePackValue(Map<String, Object?> value) => ToolPkgRegisteredManifestExtension(
+    key: value['key'] as String,
+    function: value['function'] as String,
+    functionSource: value['functionSource'] == null ? null : value['functionSource'] as String,
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'key': key,
+    'function': function,
+    'functionSource': functionSource == null ? null : functionSource!,
+  };
+
+  final String key;
+  final String function;
+  final String? functionSource;
 }
 
 /// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgResourceRuntime`.
@@ -1459,5 +1623,44 @@ class PluginLoadingProgress {
   final int pluginsStarted;
   final int pluginsTotal;
   final List<PluginLoadingItem> plugins;
+}
+
+/// Generated SDK model for Rust type `operit_tools::tools::packTool::RuntimePackageManager::ToolPkgLoadIssue`.
+class ToolPkgLoadIssue {
+  const ToolPkgLoadIssue({
+    required this.sourcePath,
+    required this.packageName,
+    required this.displayName,
+    required this.code,
+    required this.message,
+    required this.packageKind,
+  });
+
+  /// Decodes `operit_tools::tools::packTool::RuntimePackageManager::ToolPkgLoadIssue` from a MessagePack value map.
+  factory ToolPkgLoadIssue.fromMessagePackValue(Map<String, Object?> value) => ToolPkgLoadIssue(
+    sourcePath: value['sourcePath'] as String,
+    packageName: value['packageName'] == null ? null : value['packageName'] as String,
+    displayName: value['displayName'] as String,
+    code: value['code'] as String,
+    message: value['message'] as String,
+    packageKind: value['packageKind'] as String,
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'sourcePath': sourcePath,
+    'packageName': packageName == null ? null : packageName!,
+    'displayName': displayName,
+    'code': code,
+    'message': message,
+    'packageKind': packageKind,
+  };
+
+  final String sourcePath;
+  final String? packageName;
+  final String displayName;
+  final String code;
+  final String message;
+  final String packageKind;
 }
 

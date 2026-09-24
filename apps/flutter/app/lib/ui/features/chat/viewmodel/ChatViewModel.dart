@@ -19,6 +19,16 @@ typedef AttachmentInfo = core_proxy.AttachmentInfo;
 const String _pastedTextAttachmentPrefix = 'pasted_text:';
 const String _pastedImageAttachmentPrefix = 'pasted_image:';
 
+enum ChatToolPermissionResult {
+  allow('allow'),
+  deny('deny'),
+  allowSession('allow_session');
+
+  const ChatToolPermissionResult(this.wireName);
+
+  final String wireName;
+}
+
 class PastedImageAttachmentPayload {
   /// Creates a base64 image payload for a virtual chat attachment.
   const PastedImageAttachmentPayload({
@@ -83,13 +93,18 @@ class ChatInputSubmitDecision {
 }
 
 class ChatViewModel {
-  ChatViewModel({this.bridge = const ProxyCoreRuntimeBridge()})
-    : clients = GeneratedCoreProxyClients(bridge),
-      _chat = GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain;
+  ChatViewModel({
+    this.bridge = const ProxyCoreRuntimeBridge(),
+    GeneratedChatRuntimeHolderMainCoreProxy? chat,
+  }) : clients = GeneratedCoreProxyClients(bridge),
+       _chat = chat ?? GeneratedCoreProxyClients(bridge).chatRuntimeHolderMain;
 
   final OperitRuntimeBridge bridge;
   final GeneratedCoreProxyClients clients;
   final GeneratedChatRuntimeHolderMainCoreProxy _chat;
+
+  /// The chat runtime scoped to this view model's window.
+  GeneratedChatRuntimeHolderMainCoreProxy get chatCore => _chat;
 
   /// Watches the selected chat id used to bind per-chat Core flows.
   Stream<String?> watchCurrentChatId() {
@@ -104,6 +119,19 @@ class ChatViewModel {
   /// Watches runtime state for one explicit main-runtime chat id.
   Stream<core_proxy.ChatState> watchChatState(String chatId) {
     return _chat.chatStateFlow(chatId: chatId);
+  }
+
+  /// Sends a decision for a permission request through the owning chat route.
+  Future<void> respondToolPermissionRequest({
+    required String chatId,
+    required String requestId,
+    required ChatToolPermissionResult result,
+  }) {
+    return _chat.respondChatToolPermission(
+      chatId: chatId,
+      requestId: requestId,
+      result: result.wireName,
+    );
   }
 
   Future<void> sendUserMessage(
@@ -431,14 +459,8 @@ class ChatViewModel {
     return _chat.showLatestMessagesForCurrentChat();
   }
 
-  Future<String> createAndBindWorkspace(
-    String chatId,
-    String name,
-  ) {
-    return _chat.createAndBindWorkspace(
-      chatId: chatId,
-      name: name,
-    );
+  Future<String> createAndBindWorkspace(String chatId, String name) {
+    return _chat.createAndBindWorkspace(chatId: chatId, name: name);
   }
 
   Future<void> bindChatToWorkspace(String chatId, String workspace) {

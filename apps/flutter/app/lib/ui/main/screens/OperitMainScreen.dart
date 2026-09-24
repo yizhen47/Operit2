@@ -19,6 +19,7 @@ import '../layout/PhoneLayout.dart';
 import '../MainLayoutController.dart';
 import '../TopBarController.dart';
 import '../layout/TabletLayout.dart';
+import '../layout/SidebarDockController.dart';
 import '../navigation/AppNavigationModels.dart';
 import '../navigation/AppRouteCatalog.dart';
 import '../navigation/ToolPkgCatalogChangeBus.dart';
@@ -42,6 +43,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   late final AppRouterState _routerState;
   late final TopBarController _topBarController;
   late final MainLayoutController _mainLayoutController;
+  late final SidebarDockController _sidebarDockController;
   List<core_proxy.ToolPkgUiRoute> _toolPkgUiRoutes =
       const <core_proxy.ToolPkgUiRoute>[];
   List<core_proxy.ToolPkgNavigationEntry> _toolPkgNavigationEntries =
@@ -71,6 +73,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     super.initState();
     _topBarController = TopBarController();
     _mainLayoutController = MainLayoutController();
+    _sidebarDockController = SidebarDockController();
     _routerState = AppRouterState(AppRouteCatalog.initialEntry());
     _drawerConversationState = ValueNotifier<DrawerConversationState>(
       const DrawerConversationState(),
@@ -85,6 +88,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
         unawaited(_refreshToolPkgNavigationModel());
       }
     });
+    unawaited(_loadSidebarDockPreferences());
     unawaited(_initializeDrawerData());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -194,6 +198,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
       toolPkgNavigationEntries: _toolPkgNavigationEntries,
     );
     AppRouteDiscoveryGateway.install(() => _navigationModel.routes);
+    _synchronizeSidebarDock();
     if (!_requestedInitialToolPkgNavigationRefresh) {
       _requestedInitialToolPkgNavigationRefresh = true;
       _refreshToolPkgNavigationModel();
@@ -221,6 +226,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     _routerState.dispose();
     _topBarController.dispose();
     _mainLayoutController.dispose();
+    _sidebarDockController.dispose();
     super.dispose();
   }
 
@@ -303,7 +309,36 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
         toolPkgNavigationEntries: _toolPkgNavigationEntries,
       );
       AppRouteDiscoveryGateway.install(() => _navigationModel.routes);
+      _synchronizeSidebarDock();
     });
+  }
+
+  /// Synchronizes dock placement with the current navigation catalog.
+  void _synchronizeSidebarDock() {
+    _sidebarDockController.synchronize(
+      pluginEntries: _navigationModel.navigationEntries
+          .where(
+            (entry) => entry.surface == NavigationSurface.mainSidebarPlugins,
+          )
+          .toList(growable: false),
+      routesById: _navigationModel.routesById,
+    );
+  }
+
+  /// Loads the persisted sidebar dock layout through the Flutter preference layer.
+  Future<void> _loadSidebarDockPreferences() async {
+    try {
+      await _sidebarDockController.loadPreferences();
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'sidebar dock persistence',
+          context: ErrorDescription('while loading sidebar dock layout'),
+        ),
+      );
+    }
   }
 
   /// Loads drawer conversations and their character avatar metadata.
@@ -868,18 +903,17 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _routerState,
+      animation: Listenable.merge(<Listenable>[
+        _routerState,
+        _sidebarDockController,
+      ]),
       builder: (context, _) {
         final currentRouteEntry = _routerState.currentEntry;
         final currentScreen = AppRouteCatalog.resolveScreen(
           _navigationModel,
           currentRouteEntry,
         );
-        final pluginSidebarEntries = _navigationModel.navigationEntries
-            .where(
-              (entry) => entry.surface == NavigationSurface.mainSidebarPlugins,
-            )
-            .toList(growable: false);
+        final pluginSidebarEntries = _sidebarDockController.primaryEntries;
         final appBarEntries = _navigationModel.navigationEntries
             .where((entry) => entry.surface == NavigationSurface.appBar)
             .toList(growable: false);
@@ -918,61 +952,64 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
           ],
         );
 
-        return MainLayoutScope(
-          controller: _mainLayoutController,
-          child: TopBarScope(
-            controller: _topBarController,
-            child: ValueListenableBuilder<bool>(
-              valueListenable: _drawerOpenState,
-              child: Scaffold(
-                body: useTabletLayout
-                    ? TabletLayout(
-                        content: content,
-                        navigationEntries: _navigationModel.navigationEntries,
-                        pluginSidebarEntries: pluginSidebarEntries,
-                        selectedRouteId: currentRouteEntry.routeId,
-                        drawerConversationState: _drawerConversationState,
-                        isTabletSidebarExpanded: _isTabletSidebarExpanded,
-                        tabletSidebarWidth: 280,
-                        collapsedTabletSidebarWidth: 56,
-                        onNavigationEntrySelected: _navigateToNavigationEntry,
-                        onConversationActivated: _activateConversationRoute,
-                      )
-                    : PhoneLayout(
-                        content: content,
-                        navigationEntries: _navigationModel.navigationEntries,
-                        pluginSidebarEntries: pluginSidebarEntries,
-                        selectedRouteId: currentRouteEntry.routeId,
-                        drawerConversationState: _drawerConversationState,
-                        drawerWidth: screenSize.width * 0.75,
-                        drawerOpenState: _drawerOpenState,
-                        enableNavigationAnimation: true,
-                        onOpenDrawer: () {
-                          _drawerOpenState.value = true;
-                        },
-                        onCloseDrawer: () {
-                          _drawerOpenState.value = false;
-                        },
-                        onNavigationEntrySelected: _navigateToNavigationEntry,
-                        onConversationActivated: _activateConversationRoute,
-                      ),
+        return SidebarDockScope(
+          controller: _sidebarDockController,
+          child: MainLayoutScope(
+            controller: _mainLayoutController,
+            child: TopBarScope(
+              controller: _topBarController,
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _drawerOpenState,
+                child: Scaffold(
+                  body: useTabletLayout
+                      ? TabletLayout(
+                          content: content,
+                          navigationEntries: _navigationModel.navigationEntries,
+                          pluginSidebarEntries: pluginSidebarEntries,
+                          selectedRouteId: currentRouteEntry.routeId,
+                          drawerConversationState: _drawerConversationState,
+                          isTabletSidebarExpanded: _isTabletSidebarExpanded,
+                          tabletSidebarWidth: 280,
+                          collapsedTabletSidebarWidth: 56,
+                          onNavigationEntrySelected: _navigateToNavigationEntry,
+                          onConversationActivated: _activateConversationRoute,
+                        )
+                      : PhoneLayout(
+                          content: content,
+                          navigationEntries: _navigationModel.navigationEntries,
+                          pluginSidebarEntries: pluginSidebarEntries,
+                          selectedRouteId: currentRouteEntry.routeId,
+                          drawerConversationState: _drawerConversationState,
+                          drawerWidth: screenSize.width * 0.75,
+                          drawerOpenState: _drawerOpenState,
+                          enableNavigationAnimation: true,
+                          onOpenDrawer: () {
+                            _drawerOpenState.value = true;
+                          },
+                          onCloseDrawer: () {
+                            _drawerOpenState.value = false;
+                          },
+                          onNavigationEntrySelected: _navigateToNavigationEntry,
+                          onConversationActivated: _activateConversationRoute,
+                        ),
+                ),
+                builder: (context, drawerOpen, child) {
+                  final phoneDrawerOpen = !useTabletLayout && drawerOpen;
+                  return PopScope(
+                    canPop:
+                        defaultTargetPlatform != TargetPlatform.android &&
+                        !phoneDrawerOpen &&
+                        !_routerState.canPop,
+                    onPopInvokedWithResult: (didPop, result) {
+                      if (didPop) {
+                        return;
+                      }
+                      _handleSystemBack(currentScreen);
+                    },
+                    child: child!,
+                  );
+                },
               ),
-              builder: (context, drawerOpen, child) {
-                final phoneDrawerOpen = !useTabletLayout && drawerOpen;
-                return PopScope(
-                  canPop:
-                      defaultTargetPlatform != TargetPlatform.android &&
-                      !phoneDrawerOpen &&
-                      !_routerState.canPop,
-                  onPopInvokedWithResult: (didPop, result) {
-                    if (didPop) {
-                      return;
-                    }
-                    _handleSystemBack(currentScreen);
-                  },
-                  child: child!,
-                );
-              },
             ),
           ),
         );

@@ -55,21 +55,21 @@ use operit_link::{
 };
 use operit_runtime::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerBrowserAutomation,
-    requestOwnerBrowserSession, requestOwnerComposeWebViewController, requestOwnerFileOpen,
-    requestOwnerFileShare, requestOwnerLocalInference, requestOwnerMusicPlayback,
-    requestOwnerSystemCaptureScreenshot, requestOwnerSystemOperation,
-    requestOwnerSystemRecognizeText, requestOwnerToolPermissionAsync, requestOwnerTtsPlayback,
+    requestChatToolPermissionAsync, requestOwnerAudioPlay, requestOwnerBluetooth,
+    requestOwnerBrowserAutomation, requestOwnerBrowserSession,
+    requestOwnerComposeWebViewController, requestOwnerFileOpen, requestOwnerFileShare,
+    requestOwnerLocalInference, requestOwnerMusicPlayback, requestOwnerSystemCaptureScreenshot,
+    requestOwnerSystemOperation, requestOwnerSystemRecognizeText, requestOwnerTtsPlayback,
     requestOwnerTtsSynthesis, requestOwnerWebVisit, RuntimeHostInteractionAudioPlayPayload,
     RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionBrowserAutomationPayload,
     RuntimeHostInteractionBrowserSessionPayload,
     RuntimeHostInteractionComposeWebViewControllerPayload, RuntimeHostInteractionFileOpenPayload,
     RuntimeHostInteractionFileSharePayload, RuntimeHostInteractionLocalInferencePayload,
     RuntimeHostInteractionMusicPlaybackPayload, RuntimeHostInteractionSystemOperationPayload,
-    RuntimeHostInteractionSystemRecognizeTextPayload, RuntimeHostInteractionToolPermissionPayload,
-    RuntimeHostInteractionToolPermissionTool, RuntimeHostInteractionToolPermissionToolParameter,
-    RuntimeHostInteractionTtsPlaybackPayload, RuntimeHostInteractionTtsSynthesisPayload,
-    RuntimeHostInteractionWebVisitHeader, RuntimeHostInteractionWebVisitPayload,
+    RuntimeHostInteractionSystemRecognizeTextPayload, RuntimeHostInteractionToolPermissionTool,
+    RuntimeHostInteractionToolPermissionToolParameter, RuntimeHostInteractionTtsPlaybackPayload,
+    RuntimeHostInteractionTtsSynthesisPayload, RuntimeHostInteractionWebVisitHeader,
+    RuntimeHostInteractionWebVisitPayload,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use operit_store::CoreSpaceStore::CoreSpaceStore;
@@ -581,12 +581,14 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
-        .setAsyncPermissionRequester(move |tool, description| async move {
-            let response = requestOwnerToolPermissionAsync(
-                RuntimeHostInteractionToolPermissionPayload {
-                    tool: tool_to_permission_payload(&tool),
-                    description,
-                },
+        .setAsyncPermissionRequester(move |tool, description, chatId| async move {
+            let Some(chatId) = chatId else {
+                return PermissionRequestResult::DENY;
+            };
+            let response = requestChatToolPermissionAsync(
+                chatId,
+                tool_to_permission_payload(&tool),
+                description,
                 Duration::from_millis(PERMISSION_REQUEST_TIMEOUT_MS),
             )
             .await;
@@ -597,7 +599,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                     return PermissionRequestResult::DENY;
                 }
             };
-            match response.result.as_str() {
+            match response.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,
                 "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,

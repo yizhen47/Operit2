@@ -82,6 +82,12 @@ Widget _withModifier(
   required _ComposeDslModifierScope modifierScope,
 }) {
   final ops = _modifierOps(props['modifier']);
+  final dragOp = _modifierOpByToken(props['modifier'], 'draggestures');
+  final transformOp = _modifierOpByToken(
+    props['modifier'],
+    'transformgestures',
+  );
+  final combinedMotion = dragOp != null && transformOp != null;
   Widget current = child;
   current = _withDirectModifierProps(
     context,
@@ -90,6 +96,16 @@ Widget _withModifier(
     nodeType: nodeType,
     modifierScope: modifierScope,
   );
+  if (nodeType == 'Row') {
+    final actionId = _actionId(props['onClick']);
+    if (actionId != null) {
+      current = GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onAction(actionId),
+        child: current,
+      );
+    }
+  }
   for (final op in ops.reversed) {
     final name = _normalizeToken((op['name'] ?? '').toString());
     final args = op['args'] is List<Object?>
@@ -235,6 +251,20 @@ Widget _withModifier(
       case 'tapgestures':
       case 'draggestures':
       case 'transformgestures':
+        if (combinedMotion && name == 'transformgestures') break;
+        if (combinedMotion && name == 'draggestures') {
+          final transformArgs = transformOp['args'] as List<Object?>;
+          current = _ComposeGestureRegion(
+            kind: 'motiongestures',
+            options: <String, Object?>{
+              ..._stringMap(args.firstOrNull),
+              ..._stringMap(transformArgs.firstOrNull),
+            },
+            onAction: onAction,
+            child: current,
+          );
+          break;
+        }
         current = _ComposeGestureRegion(
           kind: name,
           options: _stringMap(args.firstOrNull),

@@ -10,9 +10,11 @@ class _ComposeDialogHost extends StatefulWidget {
     required this.onDismissRequest,
     required this.closeOnDismissRequest,
     required this.dialogBuilder,
+    this.embedded = false,
   });
 
   final Map<String, Object?> properties;
+  final bool embedded;
 
   /// Resolves function for the Compose DSL renderer.
   final Future<void> Function() onDismissRequest;
@@ -55,7 +57,12 @@ class _ComposeDialogHostState extends State<_ComposeDialogHost> {
 
   /// Removes only the route owned by this dialog node.
   void _close() {
+    if (_closed) return;
     _closed = true;
+    if (widget.embedded) {
+      Navigator.of(context).pop();
+      return;
+    }
     final route = _route;
     _route = null;
     if (route?.isActive == true) route!.navigator!.removeRoute(route);
@@ -63,40 +70,14 @@ class _ComposeDialogHostState extends State<_ComposeDialogHost> {
 
   /// Opens a modal with independent outside-click and back-button policies.
   void _open() {
-    if (!mounted || _closed) return;
+    if (!mounted || _closed || widget.embedded) return;
     final route = RawDialogRoute<void>(
       barrierDismissible: false,
       barrierColor: Colors.black54,
       pageBuilder: (context, animation, secondaryAnimation) {
         return ValueListenableBuilder<int>(
           valueListenable: _revision,
-          builder: (context, revision, child) {
-            Widget dialog = widget.dialogBuilder(context, _close);
-            if (widget.properties['decorFitsSystemWindows'] != false) {
-              dialog = SafeArea(child: dialog);
-            }
-            return PopScope(
-              canPop: false,
-              onPopInvokedWithResult: (didPop, result) {
-                if (!didPop &&
-                    widget.properties['dismissOnBackPress'] != false) {
-                  unawaited(_dismiss());
-                }
-              },
-              child: Stack(
-                fit: StackFit.expand,
-                children: <Widget>[
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: widget.properties['dismissOnClickOutside'] != false
-                        ? _dismiss
-                        : null,
-                  ),
-                  Center(child: dialog),
-                ],
-              ),
-            );
-          },
+          builder: (context, revision, child) => _buildDialog(context),
         );
       },
     );
@@ -116,7 +97,36 @@ class _ComposeDialogHostState extends State<_ComposeDialogHost> {
     super.dispose();
   }
 
-  /// Keeps modal nodes out of the surrounding layout.
+  /// Shares modal content and dismissal policies with caller-owned routes.
+  Widget _buildDialog(BuildContext context) {
+    Widget dialog = widget.dialogBuilder(context, _close);
+    if (widget.properties['decorFitsSystemWindows'] != false) {
+      dialog = SafeArea(child: dialog);
+    }
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && widget.properties['dismissOnBackPress'] != false) {
+          unawaited(_dismiss());
+        }
+      },
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: widget.properties['dismissOnClickOutside'] != false
+                ? _dismiss
+                : null,
+          ),
+          Center(child: dialog),
+        ],
+      ),
+    );
+  }
+
+  /// Renders caller-owned dialogs inline and keeps autonomous modals out of layout.
   @override
-  Widget build(BuildContext context) => const SizedBox.shrink();
+  Widget build(BuildContext context) =>
+      widget.embedded ? _buildDialog(context) : const SizedBox.shrink();
 }

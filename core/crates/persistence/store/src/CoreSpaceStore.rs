@@ -1703,9 +1703,9 @@ mod tests {
             .expect("admission must clear disconnection state"));
     }
 
-    /// Verifies a newly admitted member is ordinary by default and cannot execute runtime work.
+    /// Verifies a newly admitted member receives the complete default user capability set.
     #[test]
-    fn network_control_admission_assigns_only_the_default_user_role() {
+    fn network_control_admission_assigns_the_default_user_capabilities() {
         let host = Arc::new(MemoryStorageHost::default());
         let spaceStore = CoreSpaceStore::new(host.clone());
         initializeTestDeviceProfile(&spaceStore);
@@ -1722,12 +1722,18 @@ mod tests {
         assert!(control
             .nodeHasCapability("peer-member", "network.user", None)
             .expect("default user capability must materialize"));
-        assert!(!control
-            .nodeHasCapability("peer-member", "runtime.execute", None)
-            .expect("ordinary member execution capability must materialize"));
-        assert!(!control
+        assert!(control
+            .nodeHasCapability("peer-member", "chat.read", None)
+            .expect("default user chat read capability must materialize"));
+        assert!(control
+            .nodeHasCapability("peer-member", "storage.provide", None)
+            .expect("default user storage capability must materialize"));
+        assert!(control
             .nodeHasCapability("peer-member", "network.relay", None)
-            .expect("ordinary member relay capability must materialize"));
+            .expect("default user relay capability must materialize"));
+        assert!(control
+            .nodeHasCapability("peer-member", "runtime.execute", None)
+            .expect("default user execution capability must materialize"));
     }
 
     /// Verifies removal revokes elevated roles and readmission restores only ordinary membership.
@@ -1748,12 +1754,12 @@ mod tests {
         control
             .setIdentity(NetworkControlIdentityAssignment {
                 nodeId: "peer-runner".to_string(),
-                roleId: "runner".to_string(),
+                roleId: "auditor".to_string(),
             })
-            .expect("administrator must grant runner role");
+            .expect("administrator must grant auditor role");
         assert!(control
-            .nodeHasCapability("peer-runner", "runtime.execute", None)
-            .expect("runner capability must materialize"));
+            .nodeHasCapability("peer-runner", "network.audit.read", None)
+            .expect("auditor capability must materialize"));
 
         control
             .removeMember("peer-runner".to_string())
@@ -1763,11 +1769,14 @@ mod tests {
             .expect("administrator must readmit the member");
 
         assert!(!control
-            .nodeHasCapability("peer-runner", "runtime.execute", None)
-            .expect("readmitted member must not regain runner capability"));
+            .nodeHasCapability("peer-runner", "network.audit.read", None)
+            .expect("readmitted member must not regain auditor capability"));
         assert!(control
             .nodeHasCapability("peer-runner", "network.user", None)
             .expect("readmitted member must receive ordinary capability"));
+        assert!(control
+            .nodeHasCapability("peer-runner", "runtime.execute", None)
+            .expect("readmitted member must receive default execution capability"));
     }
 
     /// Verifies identity definitions are immutable and each device has one current identity.

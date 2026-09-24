@@ -11,8 +11,8 @@ use crate::toolpkg::ToolPkgApiVersion::{
 };
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgTemplateModels::{
-    ToolPkgManifestWorkflowTemplate, ToolPkgManifestWorkspaceTemplate,
-    ToolPkgWorkflowTemplateRuntime, ToolPkgWorkspaceTemplateRuntime,
+    ToolPkgManifestWorkspaceTemplate, ToolPkgWorkflowTemplateRuntime,
+    ToolPkgWorkspaceTemplateRuntime,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +72,16 @@ pub struct ToolPkgUiRouteRuntime {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgChatComposerSlotRuntime {
+    pub id: String,
+    pub slot: String,
+    pub screen: String,
+    pub order: i32,
+    #[serde(rename = "keepAlive")]
+    pub keepAlive: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgNavigationEntryRuntime {
     pub id: String,
     #[serde(rename = "routeId")]
@@ -116,6 +126,18 @@ pub struct ToolPkgAppLifecycleHookRuntime {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgFunctionHookRuntime {
     pub id: String,
+    pub function: String,
+    #[serde(rename = "functionSource", alias = "function_source")]
+    pub functionSource: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgCoreCommandRuntime {
+    pub id: String,
+    pub name: String,
+    pub title: LocalizedText,
+    pub description: LocalizedText,
+    pub usage: String,
     pub function: String,
     #[serde(rename = "functionSource", alias = "function_source")]
     pub functionSource: Option<String>,
@@ -232,6 +254,18 @@ pub struct ToolPkgRegisteredUiRoute {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgRegisteredChatComposerSlot {
+    pub id: String,
+    pub slot: String,
+    pub screen: String,
+    #[serde(default)]
+    pub order: i32,
+    #[serde(rename = "keepAlive")]
+    #[serde(default)]
+    pub keepAlive: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredNavigationEntry {
     pub id: String,
     #[serde(default)]
@@ -281,6 +315,18 @@ pub struct ToolPkgRegisteredAppLifecycleHook {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredFunctionHook {
     pub id: String,
+    pub function: String,
+    #[serde(rename = "functionSource", alias = "function_source")]
+    pub functionSource: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgRegisteredCoreCommand {
+    pub id: String,
+    pub name: String,
+    pub title: LocalizedText,
+    pub description: LocalizedText,
+    pub usage: String,
     pub function: String,
     #[serde(rename = "functionSource", alias = "function_source")]
     pub functionSource: Option<String>,
@@ -355,6 +401,14 @@ pub struct ToolPkgRegisteredAiProvider {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ToolPkgRegisteredManifestExtension {
+    pub key: String,
+    pub function: String,
+    #[serde(rename = "functionSource", alias = "function_source")]
+    pub functionSource: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredTagFunctionHook {
     pub id: String,
     pub tag: String,
@@ -371,6 +425,8 @@ pub struct ToolPkgMainRegistration {
     pub toolboxUiModules: Vec<ToolPkgRegisteredUiModule>,
     #[serde(rename = "uiRoutes", default)]
     pub uiRoutes: Vec<ToolPkgRegisteredUiRoute>,
+    #[serde(rename = "chatComposerSlots", default)]
+    pub chatComposerSlots: Vec<ToolPkgRegisteredChatComposerSlot>,
     #[serde(rename = "navigationEntries", default)]
     pub navigationEntries: Vec<ToolPkgRegisteredNavigationEntry>,
     #[serde(rename = "desktopWidgets", default)]
@@ -413,8 +469,12 @@ pub struct ToolPkgMainRegistration {
     pub promptEstimateFinalizeHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "summaryGenerateHooks", default)]
     pub summaryGenerateHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    #[serde(rename = "coreCommands", default)]
+    pub coreCommands: Vec<ToolPkgRegisteredCoreCommand>,
     #[serde(rename = "aiProviders", default)]
     pub aiProviders: Vec<ToolPkgRegisteredAiProvider>,
+    #[serde(rename = "manifestExtensions", default)]
+    pub manifestExtensions: Vec<ToolPkgRegisteredManifestExtension>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -438,6 +498,10 @@ pub struct ToolPkgContainerRuntime {
     #[serde(rename = "apiVersion")]
     pub apiVersion: String,
     pub requires: Vec<ToolPkgManifestRequirement>,
+    #[serde(rename = "dependencyIssues", default)]
+    pub dependencyIssues: Vec<ToolPkgDependencyIssue>,
+    #[serde(rename = "manifestExtensions", default)]
+    pub manifestExtensions: BTreeMap<String, Value>,
     pub author: Vec<String>,
     #[serde(rename = "mainEntry")]
     pub mainEntry: String,
@@ -449,9 +513,9 @@ pub struct ToolPkgContainerRuntime {
     pub resources: Vec<ToolPkgResourceRuntime>,
     #[serde(rename = "wasmModules")]
     pub wasmModules: Vec<ToolPkgWasmModuleRuntime>,
+    /// Retains the legacy runtime field while workflow template semantics live in manifest extensions.
     #[serde(rename = "workflowTemplates")]
-    pub workflowTemplates:
-        Vec<crate::toolpkg::ToolPkgTemplateModels::ToolPkgWorkflowTemplateRuntime>,
+    pub workflowTemplates: Vec<ToolPkgWorkflowTemplateRuntime>,
     #[serde(rename = "workspaceTemplates")]
     pub workspaceTemplates:
         Vec<crate::toolpkg::ToolPkgTemplateModels::ToolPkgWorkspaceTemplateRuntime>,
@@ -459,6 +523,8 @@ pub struct ToolPkgContainerRuntime {
     pub uiModules: Vec<ToolPkgUiModuleRuntime>,
     #[serde(rename = "uiRoutes")]
     pub uiRoutes: Vec<ToolPkgUiRouteRuntime>,
+    #[serde(rename = "chatComposerSlots")]
+    pub chatComposerSlots: Vec<ToolPkgChatComposerSlotRuntime>,
     #[serde(rename = "navigationEntries")]
     pub navigationEntries: Vec<ToolPkgNavigationEntryRuntime>,
     #[serde(rename = "desktopWidgets")]
@@ -501,8 +567,12 @@ pub struct ToolPkgContainerRuntime {
     pub promptEstimateFinalizeHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "summaryGenerateHooks")]
     pub summaryGenerateHooks: Vec<ToolPkgFunctionHookRuntime>,
+    #[serde(rename = "coreCommands")]
+    pub coreCommands: Vec<ToolPkgCoreCommandRuntime>,
     #[serde(rename = "aiProviders")]
     pub aiProviders: Vec<ToolPkgAiProviderRuntime>,
+    #[serde(rename = "manifestExtensionHandlers", default)]
+    pub manifestExtensionHandlers: Vec<ToolPkgRegisteredManifestExtension>,
     #[serde(rename = "logoResource")]
     pub logoResource: Option<ToolPkgResourceRuntime>,
     #[serde(rename = "marketOrigin", default)]
@@ -553,10 +623,22 @@ pub struct ToolPkgManifest {
     pub resources: Vec<ToolPkgManifestResource>,
     #[serde(rename = "wasm_modules", alias = "wasmModules", default)]
     pub wasmModules: Vec<ToolPkgManifestWasmModule>,
-    #[serde(rename = "workflow_templates", default)]
-    pub workflowTemplates: Vec<ToolPkgManifestWorkflowTemplate>,
     #[serde(rename = "workspace_templates", default)]
     pub workspaceTemplates: Vec<ToolPkgManifestWorkspaceTemplate>,
+    #[serde(flatten)]
+    pub extensionFields: BTreeMap<String, Value>,
+}
+
+/// Describes one unsatisfied prerequisite declared by a ToolPkg manifest.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ToolPkgDependencyIssue {
+    pub id: String,
+    pub code: String,
+    pub requiredMinVersion: Option<String>,
+    pub requiredMaxVersion: Option<String>,
+    pub installedVersion: Option<String>,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -901,38 +983,6 @@ impl ToolPkgArchiveParser {
             });
         }
 
-        let mut workflowTemplateIds = BTreeSet::new();
-        let mut workflowTemplates = Vec::new();
-        for (index, template) in manifest.workflowTemplates.iter().enumerate() {
-            let templateId = template.id.trim().to_string();
-            if templateId.is_empty() {
-                return Err(format!("workflow_templates[{index}].id is required"));
-            }
-            if !workflowTemplateIds.insert(templateId.to_ascii_lowercase()) {
-                return Err(format!("Duplicate workflow template id: {templateId}"));
-            }
-            let resourceKey = template.resource_key.trim().to_string();
-            if resourceKey.is_empty() {
-                return Err(format!(
-                    "workflow_templates[{index}].resource_key is required"
-                ));
-            }
-            let resource = resourceByKey.get(&resourceKey.to_ascii_lowercase()).ok_or_else(|| {
-                format!("workflow_templates[{index}].resource_key not found in manifest.resources: {resourceKey}")
-            })?;
-            if Self::isDirectoryResourceMime(Some(&resource.mime)) {
-                return Err(format!(
-                    "workflow_templates[{index}].resource_key must reference a file resource: {resourceKey}"
-                ));
-            }
-            workflowTemplates.push(ToolPkgWorkflowTemplateRuntime {
-                id: templateId,
-                display_name: template.display_name.clone(),
-                description: template.description.clone(),
-                resource_key: resource.key.clone(),
-            });
-        }
-
         let mut workspaceTemplateIds = BTreeSet::new();
         let mut workspaceTemplates = Vec::new();
         for (index, template) in manifest.workspaceTemplates.iter().enumerate() {
@@ -1071,6 +1121,54 @@ impl ToolPkgArchiveParser {
             });
         }
 
+        let mut manifestExtensions = manifest.extensionFields.clone();
+        if !manifest.workspaceTemplates.is_empty() {
+            manifestExtensions.insert(
+                "workspace_templates".to_string(),
+                serde_json::to_value(&manifest.workspaceTemplates)
+                    .map_err(|error| format!("workspace_templates cannot be serialized: {error}"))?,
+            );
+        }
+
+        let mut chatComposerSlots = Vec::new();
+        let mut chatComposerSlotIds = BTreeSet::new();
+        for (index, contribution) in mainRegistration.chatComposerSlots.iter().enumerate() {
+            let id = contribution.id.trim().to_string();
+            let slot = contribution.slot.trim().to_ascii_lowercase();
+            if id.is_empty() {
+                return Err(format!(
+                    "{TOOLPKG_REGISTRATION_CHAT_COMPOSER_SLOT}[{index}].id is required"
+                ));
+            }
+            if !chatComposerSlotIds.insert(id.to_ascii_lowercase()) {
+                return Err(format!("Duplicate ToolPkg chat composer slot id: {id}"));
+            }
+            if slot != TOOLPKG_CHAT_COMPOSER_SLOT_ABOVE_INPUT {
+                return Err(format!(
+                    "{TOOLPKG_REGISTRATION_CHAT_COMPOSER_SLOT}[{index}].slot is unsupported: {slot}"
+                ));
+            }
+            let screen = Self::normalizeZipEntryPath(&contribution.screen).ok_or_else(|| {
+                format!(
+                    "{TOOLPKG_REGISTRATION_CHAT_COMPOSER_SLOT}[{index}].screen is invalid: {}",
+                    contribution.screen
+                )
+            })?;
+            if !entryIndex.containsEntry(&screen) {
+                return Err(format!(
+                    "{TOOLPKG_REGISTRATION_CHAT_COMPOSER_SLOT}[{index}].screen not found: {}",
+                    contribution.screen
+                ));
+            }
+            chatComposerSlots.push(ToolPkgChatComposerSlotRuntime {
+                id,
+                slot,
+                screen,
+                order: contribution.order,
+                keepAlive: contribution.keepAlive,
+            });
+        }
+
         let mut navigationEntries = Vec::new();
         let mut navigationEntryIds = BTreeSet::new();
         for (index, entry) in registeredNavigationEntries.iter().enumerate() {
@@ -1191,6 +1289,7 @@ impl ToolPkgArchiveParser {
             &mainRegistration.summaryGenerateHooks,
             TOOLPKG_REGISTRATION_SUMMARY_GENERATE_HOOK,
         )?;
+        let coreCommands = validateCoreCommands(&mainRegistration.coreCommands)?;
         let aiProviders = validateAiProviders(&mainRegistration.aiProviders)?;
 
         let containerDescription = if hasLocalizedTextContent(&manifest.description) {
@@ -1218,6 +1317,8 @@ impl ToolPkgArchiveParser {
             version: manifest.version.clone(),
             apiVersion: apiVersionText,
             requires,
+            dependencyIssues: Vec::new(),
+            manifestExtensions,
             author: manifest.author.clone(),
             mainEntry: normalizedMainEntry,
             sourceType,
@@ -1225,10 +1326,11 @@ impl ToolPkgArchiveParser {
             subpackages: subpackageRuntimes,
             resources,
             wasmModules,
-            workflowTemplates,
+            workflowTemplates: Vec::new(),
             workspaceTemplates,
             uiModules,
             uiRoutes,
+            chatComposerSlots,
             navigationEntries,
             desktopWidgets,
             appLifecycleHooks,
@@ -1250,7 +1352,9 @@ impl ToolPkgArchiveParser {
             promptFinalizeHooks,
             promptEstimateFinalizeHooks,
             summaryGenerateHooks,
+            coreCommands,
             aiProviders,
+            manifestExtensionHandlers: mainRegistration.manifestExtensions,
             logoResource,
             marketOrigin: mainRegistration.marketOrigin.clone(),
         };
@@ -1611,6 +1715,44 @@ fn validateFunctionHooks(
             id,
             function,
             functionSource: hook.functionSource.clone(),
+        });
+    }
+    Ok(runtimes)
+}
+
+#[allow(non_snake_case)]
+/// Validates command registrations and produces executable runtime records.
+fn validateCoreCommands(
+    commands: &[ToolPkgRegisteredCoreCommand],
+) -> Result<Vec<ToolPkgCoreCommandRuntime>, String> {
+    let mut runtimes = Vec::new();
+    let mut ids = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    for (index, command) in commands.iter().enumerate() {
+        let id = command.id.trim().to_string();
+        if !ids.insert(id.to_ascii_lowercase()) {
+            return Err(format!("Duplicate core command id: {id}"));
+        }
+        let name = command.name.trim().to_string();
+        if name
+            .chars()
+            .any(|character| character == '/' || character.is_whitespace())
+        {
+            return Err(format!(
+                "{TOOLPKG_REGISTRATION_CORE_COMMAND}[{index}].name must not contain '/' or whitespace"
+            ));
+        }
+        if !names.insert(name.to_ascii_lowercase()) {
+            return Err(format!("Duplicate core command name: {name}"));
+        }
+        runtimes.push(ToolPkgCoreCommandRuntime {
+            id,
+            name,
+            title: command.title.clone(),
+            description: command.description.clone(),
+            usage: command.usage.trim().to_string(),
+            function: command.function.trim().to_string(),
+            functionSource: command.functionSource.clone(),
         });
     }
     Ok(runtimes)

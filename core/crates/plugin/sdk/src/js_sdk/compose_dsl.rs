@@ -2268,6 +2268,21 @@ pub struct RowProps {
     /// Optional click action for the row as one interactive target.
     pub onClick: Option<Arc<dyn Fn() -> RowPropsOnClickOutput + Send + Sync>>,
 }
+/// Properties for laying out child nodes horizontally across multiple lines.
+pub struct FlowRowProps {
+    /// Shared node layout, drawing, identity, and lifecycle properties.
+    pub base_compose_common_props: ComposeCommonProps,
+    /// Child nodes placed from start to end and continued on a new line when needed.
+    pub content: Option<ComposeChildren>,
+    /// Distribution of children across each horizontal line.
+    pub horizontalArrangement: Option<ComposeArrangement>,
+    /// Distribution of completed lines within the flow row height.
+    pub verticalArrangement: Option<ComposeArrangement>,
+    /// Vertical alignment of children within each horizontal line.
+    pub itemVerticalAlignment: Option<ComposeAlignment>,
+    /// Gap inserted between completed horizontal lines.
+    pub runSpacing: Option<f64>,
+}
 /// Properties for stacking child nodes in the same layout bounds.
 pub struct BoxProps {
     /// Shared node layout, drawing, identity, and lifecycle properties.
@@ -2409,6 +2424,28 @@ pub struct ButtonProps {
     pub contentPadding: Option<ComposePadding>,
     /// Outline used for button background, border, and clipping.
     pub shape: Option<ComposeShape>,
+    /// Foreground color used by the shared Material button renderer.
+    pub contentColor: Option<ComposeColor>,
+}
+/// Host popup menu with a labeled anchor and indexed selection callback.
+pub struct DropdownMenuProps {
+    /// Shared node layout, drawing, identity, and lifecycle properties.
+    pub base_compose_common_props: ComposeCommonProps,
+    /// Label displayed above the selected value.
+    pub label: String,
+    /// Currently selected text displayed inside the anchor.
+    pub text: String,
+    /// Whether the popup accepts interaction.
+    pub enabled: Option<bool>,
+    /// Action receiving the selected zero-based item index.
+    pub onClick: Arc<dyn Fn(f64) -> () + Send + Sync>,
+}
+/// Material floating action with a named icon and standard button properties.
+pub struct FloatingActionButtonProps {
+    /// Shared button properties including action and colors.
+    pub base_button_props: ButtonProps,
+    /// Material icon displayed inside the floating button.
+    pub icon: String,
 }
 /// Icon or custom content rendered as a compact clickable control.
 pub struct IconButtonProps {
@@ -2807,6 +2844,16 @@ pub struct AlertDialogProps {
 }
 /// Core component factories available through `ComposeDslContext::UI`.
 pub struct ComposeUiFactoryRegistry {
+    /// Creates a text-only Material button.
+    pub TextButton: ComposeNodeFactory<ButtonProps>,
+    /// Creates a filled tonal Material button.
+    pub FilledTonalButton: ComposeNodeFactory<ButtonProps>,
+    /// Creates an anchored popup with indexed item selection.
+    pub DropdownMenu: ComposeNodeFactory<DropdownMenuProps>,
+    /// Creates a floating action button with a named icon.
+    pub FloatingActionButton: ComposeNodeFactory<FloatingActionButtonProps>,
+    /// Creates a compact floating action button with a named icon.
+    pub SmallFloatingActionButton: ComposeNodeFactory<FloatingActionButtonProps>,
     /// Creates a custom modal dialog.
     pub Dialog: ComposeNodeFactory<DialogProps>,
     /// Creates a modal confirmation dialog.
@@ -2815,6 +2862,8 @@ pub struct ComposeUiFactoryRegistry {
     pub Column: ComposeNodeFactory<ColumnProps>,
     /// Creates a horizontal layout container.
     pub Row: ComposeNodeFactory<RowProps>,
+    /// Creates a horizontal layout container that wraps child nodes across lines.
+    pub FlowRow: ComposeNodeFactory<FlowRowProps>,
     /// Creates a stacking layout container.
     pub Box: ComposeNodeFactory<BoxProps>,
     /// Creates an empty element that reserves layout space.
@@ -2954,8 +3003,36 @@ pub struct ComposeRouteInfo {
     /// Tool-package UI module rendered by the destination.
     pub toolPkgUiModuleId: JsOptional<String>,
 }
+/// Resolved colors and brightness supplied by the current UI host.
+pub struct ComposeThemeSnapshot {
+    /// Effective host brightness, either light or dark.
+    pub brightness: String,
+    /// Resolved Material color roles encoded as CSS RRGGBBAA hex strings.
+    pub colors: BTreeMap<String, String>,
+}
+/// Completion returned by a theme change listener.
+pub enum ComposeThemeListenerOutput {
+    /// Completes a synchronous theme update.
+    Variant1(()),
+    /// Completes an asynchronous theme update.
+    Variant2(JsFuture<()>),
+}
+/// Host theme service independent of any WebView or rendering framework.
+pub struct ComposeTheme;
+/// Public theme operations scoped to the current UI execution context.
+pub trait ComposeThemeMethods: Send + Sync {
+    /// Returns the current resolved theme; throws when no UI host supplied a theme.
+    fn getCurrent(&self) -> ComposeThemeSnapshot;
+    /// Observes later theme changes and returns an unsubscribe function.
+    fn subscribe(
+        &self,
+        listener: Arc<dyn Fn(ComposeThemeSnapshot) -> ComposeThemeListenerOutput + Send + Sync>,
+    ) -> Arc<dyn Fn() -> () + Send + Sync>;
+}
 /// Theme, modifier builder, and component factories supplied to a screen renderer.
 pub struct ComposeDslContext {
+    /// Reads and observes the resolved theme of the current plugin UI host.
+    pub Theme: ComposeTheme,
     /// Active Material theme values resolved by the host.
     pub MaterialTheme: ComposeMaterialTheme,
     /// Empty modifier chain from which node modifiers are built.

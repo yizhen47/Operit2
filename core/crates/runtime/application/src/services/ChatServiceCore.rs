@@ -6,6 +6,7 @@ use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
     CHAT_INPUT_SUBMIT_ACTION_ALLOW, CHAT_INPUT_SUBMIT_ACTION_BLOCK,
     CHAT_INPUT_SUBMIT_ACTION_CONSUME, CHAT_INPUT_SUBMIT_ACTION_REPLACE,
 };
+use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
 use crate::plugins::toolpkg::ToolPkgXmlRenderBridge::ToolPkgXmlRenderBridge;
 use crate::services::core::ChatHistoryDelegate::{ChatHistoryDelegate, ChatSelectionMode};
 use crate::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
@@ -13,6 +14,10 @@ use crate::services::core::MessageProcessingDelegate::{
     ChatExecutionState, MessageProcessingDelegate, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use crate::services::RuntimeHostInteractionService::{
+    chatToolPermissionRequestsFlow, respondChatToolPermission,
+    RuntimeHostInteractionToolPermissionRequest,
+};
 use crate::ui::features::chat::webview::workspace::WorkspaceBackupManager::{
     WorkspaceBackupManager, WorkspaceFileChange,
 };
@@ -41,7 +46,9 @@ use operit_providers::runtime_support::ProviderRuntimeSupport;
 use operit_store::repository::ChatHistoryManager::ChatImportResult;
 use operit_store::repository::MemoryAutoSaveCandidateRepository::MemoryAutoSaveCandidateRepository;
 use operit_store::repository::UsageStatisticsStore::UsageStatisticsStore;
-use operit_store::PreferencesDataStore::{combine4, mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_store::PreferencesDataStore::{
+    combine4, combine5, mutableStateFlow, MutableStateFlow, StateFlow,
+};
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_tools::files::PathMapper::PathMapper;
 use operit_tools::files::VisualFileSystem::VisualFileSystem;
@@ -111,6 +118,7 @@ pub struct ChatState {
     pub isLoadingDisplayWindow: bool,
     pub pendingQueueMessages: Vec<PendingQueueMessageItem>,
     pub isPendingQueueExpanded: bool,
+    pub toolPermissionRequests: Vec<RuntimeHostInteractionToolPermissionRequest>,
 }
 
 /// Stores the runtime-owned pending message queue for one chat.
@@ -434,7 +442,7 @@ impl ChatServiceCore {
     }
 
     /// Sends a user-authored message through the active chat runtime.
-    #[operit_route_macros::operit_core_route(binding = chatIdOverride)]
+    #[operit_route_macros::operit_core_route(binding = chatIdOverride, permission = "target:runtime.execute")]
     pub async fn sendUserMessage(
         &mut self,
         promptFunctionType: PromptFunctionType,
@@ -503,6 +511,7 @@ impl ChatServiceCore {
                 CHAT_INPUT_EVENT_SUBMITTED,
             ),
         );
+        ToolPkgInputMenuToggleBridge::invalidateToggleDefinitions();
         if self.enhancedAiService.is_some() && self.messageCoordinationDelegate.is_some() {
             self.markPendingQueueBlocked(&hookChatId);
         }
@@ -538,7 +547,7 @@ impl ChatServiceCore {
     }
 
     /// Resumes an AI round on the CoreNode that already owns the chat Binding.
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn resume(&mut self, chatId: String) -> Result<(), String> {
         let chat = self
             .chatHistoryDelegate
@@ -663,7 +672,7 @@ impl ChatServiceCore {
 
     /// Marks the source chat as paused while route synchronization is in progress.
     #[operit_route_macros::before_change_route]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn beforeChangeRoute(&mut self, chatId: String) -> Result<(), String> {
         AppLogger::i(
             "ChatServiceCore",
@@ -674,7 +683,7 @@ impl ChatServiceCore {
 
     /// Resumes the target chat after the route change reaches the selected Core.
     #[operit_route_macros::after_change_route]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn afterChangeRoute(
         &mut self,
         chatId: String,
@@ -688,7 +697,7 @@ impl ChatServiceCore {
     }
 
     /// Cancels message generation for a specific chat id.
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn cancelMessage(&mut self, chatId: String) {
         let partialMessage = self
             .messageProcessingDelegate
@@ -702,7 +711,7 @@ impl ChatServiceCore {
 
     /// Adds one message to the queue owned by a specific chat.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub fn enqueuePendingQueueMessage(&mut self, chatId: String, messageText: String) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -721,7 +730,7 @@ impl ChatServiceCore {
 
     /// Deletes one queued message from a specific chat.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub fn deletePendingQueueMessage(&mut self, chatId: String, messageId: i64) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
@@ -733,7 +742,7 @@ impl ChatServiceCore {
 
     /// Removes one queued message for editing or explicit user delivery.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub fn takePendingQueueMessage(
         &mut self,
         chatId: String,
@@ -757,7 +766,7 @@ impl ChatServiceCore {
 
     /// Clears a manual-send suppression after that message is not delivered.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub fn clearPendingQueueAutoDequeueSuppression(&mut self, chatId: String) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let Some(queueState) = queueStateByChatId.get_mut(&chatId) else {
@@ -772,7 +781,7 @@ impl ChatServiceCore {
 
     /// Atomically removes the next queued message after a chat becomes ready.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub fn takeNextPendingQueueMessageIfReady(
         &mut self,
         chatId: String,
@@ -802,7 +811,7 @@ impl ChatServiceCore {
 
     /// Inserts a rejected queued message back at the front of its chat queue.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub fn restorePendingQueueMessage(&mut self, chatId: String, message: PendingQueueMessageItem) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -818,7 +827,7 @@ impl ChatServiceCore {
 
     /// Updates whether a chat's pending-message queue is expanded in the UI.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub fn setPendingQueueExpanded(&mut self, chatId: String, isExpanded: bool) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
@@ -835,14 +844,21 @@ impl ChatServiceCore {
 
     /// Renders one XML block through registered ToolPkg XML render hooks.
     #[allow(non_snake_case)]
-    pub fn renderToolPkgXml(&self, tagName: String, xmlContent: String) -> serde_json::Value {
-        ToolPkgXmlRenderBridge::renderRegisteredXml(tagName, xmlContent)
+    pub fn renderToolPkgXml(
+        &self,
+        tagName: String,
+        xmlContent: String,
+        chatId: Option<String>,
+    ) -> serde_json::Value {
+        ToolPkgXmlRenderBridge::renderRegisteredXml(tagName, xmlContent, chatId)
     }
 
     /// Creates a new chat and makes it available through chat history state.
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn ensureRoutedChat(&mut self, chatId: String) -> Result<(), String> {
-        self.chatHistoryDelegate.chatHistoryManager.ensureRoutedChat(chatId)
+        self.chatHistoryDelegate
+            .chatHistoryManager
+            .ensureRoutedChat(chatId)
             .map_err(|error| error.to_string())
     }
 
@@ -934,7 +950,7 @@ impl ChatServiceCore {
     }
 
     /// Runs immediate memory extraction for one persisted chat history.
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn updateMemory(&mut self, chatId: String) -> Result<(), String> {
         let mut enhancedAiService = self
             .newEnhancedAiServiceForChat(&chatId)
@@ -953,7 +969,7 @@ impl ChatServiceCore {
     }
 
     /// Queues explicitly selected user messages for owner-scoped memory extraction.
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn enqueueSelectedMessagesForMemory(
         &mut self,
         chatId: String,
@@ -991,7 +1007,7 @@ impl ChatServiceCore {
 
     /// Deletes one message from an explicit chat by message timestamp.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn deleteMessage(&mut self, chatId: String, messageTimestamp: i64) {
         self.chatHistoryDelegate
             .deleteMessageInChatByTimestamp(chatId, messageTimestamp);
@@ -999,7 +1015,7 @@ impl ChatServiceCore {
 
     /// Deletes multiple messages from an explicit chat by message timestamps.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn deleteMessages(&mut self, chatId: String, messageTimestamps: Vec<i64>) -> bool {
         self.chatHistoryDelegate
             .deleteMessagesInChatByTimestamps(chatId, messageTimestamps)
@@ -1007,7 +1023,7 @@ impl ChatServiceCore {
 
     /// Replaces the content of one message and refreshes the stable context window.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn updateMessage(
         &mut self,
         chatId: String,
@@ -1076,7 +1092,7 @@ impl ChatServiceCore {
 
     /// Deletes the selected message and every following message in an explicit chat.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn deleteMessagesFrom(&mut self, chatId: String, messageTimestamp: i64) -> bool {
         self.chatHistoryDelegate
             .deleteMessagesFromTimestamp(chatId, messageTimestamp)
@@ -1330,7 +1346,7 @@ impl ChatServiceCore {
 
     /// Shows file changes that would be applied when rewinding before one message timestamp.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn previewWorkspaceChangesForMessage(
         &mut self,
         chatId: String,
@@ -1347,7 +1363,7 @@ impl ChatServiceCore {
 
     /// Restores the bound workspace to the snapshot before one message timestamp.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn rewindWorkspaceForMessage(
         &mut self,
         chatId: String,
@@ -1378,7 +1394,7 @@ impl ChatServiceCore {
 
     /// Rolls an explicit chat back to a prior message timestamp.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn rollbackToMessage(
         &mut self,
         chatId: String,
@@ -1404,7 +1420,7 @@ impl ChatServiceCore {
 
     /// Rewinds a user message and sends edited content as a new turn.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn rewindAndResendMessage(
         &mut self,
         chatId: String,
@@ -1444,7 +1460,7 @@ impl ChatServiceCore {
 
     /// Regenerates one AI message in place while preserving the surrounding chat history.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "target:runtime.execute")]
     pub async fn regenerateSingleAiMessage(
         &mut self,
         chatId: String,
@@ -2131,14 +2147,14 @@ impl ChatServiceCore {
 
     /// Returns messages from the Core selected by Binding for one explicit chat.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
     pub async fn chatMessagesFlow(&self, chatId: String) -> StateFlow<Vec<ChatMessage>> {
         self.localChatMessagesFlow(chatId)
     }
 
     /// Builds a routed diagnostic chat message flow with one embedded response stream.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
     pub async fn routeProbeChatMessagesFlow(
         &self,
         chatId: String,
@@ -2199,6 +2215,18 @@ impl ChatServiceCore {
         flow
     }
 
+    /// Responds to a tool permission request through the owning chat route.
+    #[allow(non_snake_case)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.write")]
+    pub fn respondChatToolPermission(
+        &self,
+        chatId: String,
+        requestId: String,
+        result: String,
+    ) -> Result<(), String> {
+        respondChatToolPermission(chatId, requestId, result)
+    }
+
     /// Returns messages from this local Core for one explicit chat.
     #[allow(non_snake_case)]
     pub fn localChatMessagesFlow(&self, chatId: String) -> StateFlow<Vec<ChatMessage>> {
@@ -2207,7 +2235,7 @@ impl ChatServiceCore {
 
     /// Returns runtime state from the Core selected by Binding for one explicit chat.
     #[allow(non_snake_case)]
-    #[operit_route_macros::operit_core_route(binding = chatId)]
+    #[operit_route_macros::operit_core_route(binding = chatId, permission = "caller:chat.read")]
     pub async fn chatStateFlow(&self, chatId: String) -> StateFlow<ChatState> {
         self.localChatStateFlow(chatId)
     }
@@ -2233,13 +2261,19 @@ impl ChatServiceCore {
             });
         let chatHistoriesFlow = self.chatHistoryDelegate.chatHistoriesFlow();
         let pendingQueueStateFlow = self.pendingQueueStateFlow().asStateFlow();
+        let toolPermissionRequestsFlow = chatToolPermissionRequestsFlow(selectedChatId.clone());
         let characterCardManager = self.chatHistoryDelegate.characterCardManager.clone();
-        combine4(
+        combine5(
             &executionStateFlow,
             &displayWindowStateFlow,
             &chatHistoriesFlow,
             &pendingQueueStateFlow,
-            move |executionState, displayWindowState, chatHistories, pendingQueuesByChatId| {
+            &toolPermissionRequestsFlow,
+            move |executionState,
+                  displayWindowState,
+                  chatHistories,
+                  pendingQueuesByChatId,
+                  toolPermissionRequests| {
                 let currentChat = chatHistories.iter().find(|chat| chat.id == selectedChatId);
                 let currentCharacterCardName =
                     currentChat.and_then(|chat| chat.characterCardName.clone());
@@ -2268,6 +2302,7 @@ impl ChatServiceCore {
                     isLoadingDisplayWindow: displayWindowState.isLoadingDisplayWindow,
                     pendingQueueMessages,
                     isPendingQueueExpanded,
+                    toolPermissionRequests,
                 }
             },
         )

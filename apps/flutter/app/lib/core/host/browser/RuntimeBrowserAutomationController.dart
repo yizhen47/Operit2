@@ -160,14 +160,6 @@ class RuntimeBrowserAutomationController {
     final intent = _decodeSurfaceIntent(intentJson);
     final requestedTransport = _readString(intent, 'transport');
     switch (requestedTransport) {
-      case 'localTexture':
-        final platform = _requireWindowsController();
-        final textureId = await platform.browserSurfaceTextureId();
-        return jsonEncode(<String, Object?>{
-          'transport': 'localTexture',
-          'platform': 'windows',
-          'textureId': textureId,
-        });
       case 'encodedStream':
         _encodedStreamAttached = true;
         final size = _surfaceSize;

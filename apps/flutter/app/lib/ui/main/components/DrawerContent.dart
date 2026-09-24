@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -8,11 +9,14 @@ import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../data/preferences/UserPreferencesManager.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../common/CharacterAvatar.dart';
 import '../../features/chat/components/NewChatIntro.dart';
 import '../../features/chat/viewmodel/ChatSelectionTransition.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../layout/SidebarDockController.dart';
+import '../layout/NavigationLayoutMetrics.dart';
 import '../screens/ScreenRouteRegistry.dart';
 import '../../theme/OperitTheme.dart';
 import '../../window/DetachedChatWindowLauncher.dart';
@@ -77,10 +81,15 @@ class _DrawerContentState extends State<DrawerContent> {
   List<core_proxy.ChatHistoryListItem>? _pendingOrderedHistories;
   int _historyRenderLimit = _collapsedHistoryLimit;
   bool _searchExpanded = false;
+  bool _groupingModeChanged = false;
+  late final Future<void> _groupingModeLoadFuture;
   _HistoryGroupingMode _groupingMode = _HistoryGroupingMode.character;
 
   GeneratedChatRuntimeHolderMainCoreProxy get _chatCoreProxy =>
       GeneratedCoreProxyClients(widget.bridge).chatRuntimeHolderMain;
+
+  UserPreferencesManager get _preferences =>
+      UserPreferencesManager(clients: GeneratedCoreProxyClients(widget.bridge));
 
   List<core_proxy.ChatHistoryListItem> get _histories =>
       _pendingOrderedHistories ?? widget.histories;
@@ -91,6 +100,43 @@ class _DrawerContentState extends State<DrawerContent> {
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
+    _groupingModeLoadFuture = _loadGroupingMode();
+    unawaited(_reportGroupingModeLoad());
+  }
+
+  /// Loads the persisted sidebar grouping mode into the drawer state.
+  Future<void> _loadGroupingMode() async {
+    final persistedMode = await _preferences.loadChatHistoryGroupingMode();
+    if (!mounted || _groupingModeChanged || persistedMode == null) {
+      return;
+    }
+    final groupingMode = switch (persistedMode) {
+      UserPreferencesManager.CHAT_HISTORY_GROUPING_CHARACTER =>
+        _HistoryGroupingMode.character,
+      UserPreferencesManager.CHAT_HISTORY_GROUPING_WORKSPACE =>
+        _HistoryGroupingMode.workspace,
+      _ => throw FormatException(
+        'Unsupported persisted sidebar grouping mode: $persistedMode',
+      ),
+    };
+    setState(() {
+      _groupingMode = groupingMode;
+    });
+  }
+
+  /// Reports a sidebar grouping preference load failure without losing its cause.
+  Future<void> _reportGroupingModeLoad() async {
+    try {
+      await _groupingModeLoadFuture;
+    } catch (error, stackTrace) {
+      debugPrint('Failed to load sidebar grouping mode: $error\n$stackTrace');
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    }
   }
 
   @override
@@ -165,27 +211,56 @@ class _DrawerContentState extends State<DrawerContent> {
     });
   }
 
-  /// Switches the conversation list between character-card and workspace grouping.
+  /// Switches and persists the conversation list grouping mode.
   void _toggleGroupingMode() {
+    final nextMode = _groupingMode == _HistoryGroupingMode.character
+        ? _HistoryGroupingMode.workspace
+        : _HistoryGroupingMode.character;
     setState(() {
-      _groupingMode = _groupingMode == _HistoryGroupingMode.character
-          ? _HistoryGroupingMode.workspace
-          : _HistoryGroupingMode.character;
+      _groupingModeChanged = true;
+      _groupingMode = nextMode;
     });
+    unawaited(_persistGroupingMode(nextMode));
   }
 
+  /// Persists a changed sidebar grouping mode and exposes storage errors.
+  Future<void> _persistGroupingMode(_HistoryGroupingMode groupingMode) async {
+    final mode = switch (groupingMode) {
+      _HistoryGroupingMode.character =>
+        UserPreferencesManager.CHAT_HISTORY_GROUPING_CHARACTER,
+      _HistoryGroupingMode.workspace =>
+        UserPreferencesManager.CHAT_HISTORY_GROUPING_WORKSPACE,
+    };
+    try {
+      await _preferences.saveChatHistoryGroupingMode(mode);
+    } catch (error, stackTrace) {
+      debugPrint(
+        'Failed to persist sidebar grouping mode: $error\n$stackTrace',
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorMessage = error.toString();
+      });
+    }
+  }
+
+  /// Creates a conversation using the active sidebar grouping mode.
   Future<void> _createConversation() async {
     setState(() {
       _errorMessage = null;
     });
-    // Arm before creating so the intro overlay sees the flag when the new
-    // chat id arrives; disarmed again if creation fails.
-    newChatIntroArmed.value = true;
     try {
+      await _groupingModeLoadFuture;
+      // Arm before creating so the intro overlay sees the flag when the new
+      // chat id arrives; disarmed again if creation fails.
+      newChatIntroArmed.value = true;
       await _chatCoreProxy.createNewChat(
         characterCardName: null,
         group: null,
-        inheritGroupFromCurrent: true,
+        inheritGroupFromCurrent:
+            _groupingMode == _HistoryGroupingMode.workspace,
         setAsCurrentChat: true,
         characterGroupId: null,
       );
@@ -934,17 +1009,22 @@ class _DrawerContentState extends State<DrawerContent> {
                               color: widget.appearance.itemColor,
                             ),
                           ),
-                          IconButton(
-                            onPressed: () => themeController.toggle(context),
-                            visualDensity: VisualDensity.compact,
-                            tooltip: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
-                            icon: Icon(
-                              darkThemeActive
-                                  ? Icons.light_mode_outlined
-                                  : Icons.dark_mode_outlined,
-                              size: 20,
-                              color: widget.appearance.itemColor,
-                            ),
+                          Builder(
+                            builder: (buttonContext) {
+                              return IconButton(
+                                onPressed: () =>
+                                    themeController.toggle(buttonContext),
+                                visualDensity: VisualDensity.compact,
+                                tooltip: darkThemeActive ? '切换白天模式' : '切换黑夜模式',
+                                icon: Icon(
+                                  darkThemeActive
+                                      ? Icons.light_mode_outlined
+                                      : Icons.dark_mode_outlined,
+                                  size: 20,
+                                  color: widget.appearance.itemColor,
+                                ),
+                              );
+                            },
                           ),
                           IconButton(
                             onPressed: _toggleSearchExpanded,
@@ -1124,6 +1204,17 @@ class _DrawerContentState extends State<DrawerContent> {
                               widget.onNavigationEntrySelected(entry),
                         );
                       }, childCount: widget.pluginEntries.length),
+                    ),
+                    SliverToBoxAdapter(
+                      child: SidebarDockEndDropTarget(
+                        controller:
+                            MediaQuery.sizeOf(context).width >=
+                                navigationTabletBreakpoint
+                            ? SidebarDockScope.maybeOf(context)
+                            : null,
+                        location: SidebarDockLocation.primary,
+                        height: 18,
+                      ),
                     ),
                   ],
                   const SliverToBoxAdapter(child: SizedBox(height: 16)),

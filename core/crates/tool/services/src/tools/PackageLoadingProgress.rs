@@ -1,7 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
 
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +12,13 @@ pub const PLUGIN_LOAD_STATUS_FAILED: &str = "failed";
 pub const PLUGIN_LOAD_KIND_PACKAGE: &str = "package";
 pub const PLUGIN_LOAD_KIND_MCP: &str = "mcp";
 
-static PLUGIN_LOADING_SESSION_ACTIVE: AtomicBool = AtomicBool::new(false);
+#[derive(Default)]
+struct PluginLoadingSessionState {
+    generation: u64,
+    active: bool,
+}
+
+static PLUGIN_LOADING_SESSION_STATE: OnceLock<Mutex<PluginLoadingSessionState>> = OnceLock::new();
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[allow(non_snake_case)]
@@ -59,6 +64,30 @@ impl PluginLoadingProgress {
 
 static PLUGIN_LOADING_PROGRESS_FLOW: OnceLock<MutableStateFlow<PluginLoadingProgress>> =
     OnceLock::new();
+
+/// Returns the synchronized state for the current plugin loading session.
+fn pluginLoadingSessionState() -> &'static Mutex<PluginLoadingSessionState> {
+    PLUGIN_LOADING_SESSION_STATE.get_or_init(|| Mutex::new(PluginLoadingSessionState::default()))
+}
+
+/// Returns the next unique generation for a plugin loading session.
+fn nextPluginLoadingGeneration(current: u64) -> u64 {
+    current
+        .checked_add(1)
+        .expect("plugin loading session generation exhausted")
+}
+
+/// Returns whether a delayed task still owns a completed loading session.
+fn canHideCompletedPluginLoadingSession(
+    session: &PluginLoadingSessionState,
+    progress: &PluginLoadingProgress,
+    generation: u64,
+) -> bool {
+    !session.active
+        && session.generation == generation
+        && progress.visible
+        && (progress.phase == "complete_success" || progress.phase == "complete_with_failures")
+}
 
 fn pluginLoadingProgressFlow() -> &'static MutableStateFlow<PluginLoadingProgress> {
     PLUGIN_LOADING_PROGRESS_FLOW.get_or_init(|| mutableStateFlow(PluginLoadingProgress::idle()))
@@ -108,12 +137,20 @@ pub fn observePluginLoadingProgress() -> StateFlow<PluginLoadingProgress> {
 
 /// Returns whether a package/plugin load session is currently running.
 pub fn pluginLoadingSessionActive() -> bool {
-    PLUGIN_LOADING_SESSION_ACTIVE.load(Ordering::SeqCst)
+    pluginLoadingSessionState()
+        .lock()
+        .expect("plugin loading session mutex poisoned")
+        .active
 }
 
-/// Starts a visible loading session for packages and plugins.
-pub fn showPluginLoading() {
-    PLUGIN_LOADING_SESSION_ACTIVE.store(true, Ordering::SeqCst);
+/// Starts a visible loading session and returns its generation token.
+pub fn showPluginLoading() -> u64 {
+    let mut session = pluginLoadingSessionState()
+        .lock()
+        .expect("plugin loading session mutex poisoned");
+    session.generation = nextPluginLoadingGeneration(session.generation);
+    session.active = true;
+    let generation = session.generation;
     pluginLoadingProgressFlow().set_value(PluginLoadingProgress {
         visible: true,
         forceExpanded: false,
@@ -124,10 +161,14 @@ pub fn showPluginLoading() {
         pluginsTotal: 0,
         plugins: Vec::new(),
     });
+    generation
 }
 
 /// Hides the overlay without stopping the in-flight load session.
 pub fn skipPluginLoading() {
+    let _session = pluginLoadingSessionState()
+        .lock()
+        .expect("plugin loading session mutex poisoned");
     updatePluginLoadingProgress(|current| {
         current.visible = false;
         current.forceExpanded = false;
@@ -225,9 +266,15 @@ pub fn appendPluginLoadingItemLog(id: &str, message: &str) {
     });
 }
 
-/// Finishes the current load session and hides the overlay when every item succeeded.
-pub fn completePluginLoadingSession() {
-    PLUGIN_LOADING_SESSION_ACTIVE.store(false, Ordering::SeqCst);
+/// Finishes the matching load session and schedules its overlay hide.
+pub fn completePluginLoadingSession(generation: u64) {
+    let mut session = pluginLoadingSessionState()
+        .lock()
+        .expect("plugin loading session mutex poisoned");
+    if !session.active || session.generation != generation {
+        return;
+    }
+    session.active = false;
     let current = pluginLoadingProgressFlow().value();
     if !current.visible {
         return;
@@ -237,7 +284,10 @@ pub fn completePluginLoadingSession() {
         .iter()
         .any(|item| item.status == PLUGIN_LOAD_STATUS_FAILED);
     if current.plugins.is_empty() {
-        skipPluginLoading();
+        updatePluginLoadingProgress(|progress| {
+            progress.visible = false;
+            progress.forceExpanded = false;
+        });
         return;
     }
     updatePluginLoadingProgress(|progress| {
@@ -250,6 +300,69 @@ pub fn completePluginLoadingSession() {
         }
         progress.forceExpanded = false;
     });
-    std::thread::sleep(Duration::from_millis(120));
-    skipPluginLoading();
+    defaultHostRuntimeTaskSchedulerHost()
+        .scheduleDelayedHostRuntimeTask(
+            "plugin-loading-overlay-hide",
+            120,
+            Box::new(move || hidePluginLoadingIfSessionComplete(generation)),
+        )
+        .expect("plugin loading overlay hide task must be scheduled");
+}
+
+/// Hides a completed session only while its generation still owns the overlay.
+fn hidePluginLoadingIfSessionComplete(generation: u64) {
+    let session = pluginLoadingSessionState()
+        .lock()
+        .expect("plugin loading session mutex poisoned");
+    let current = pluginLoadingProgressFlow().value();
+    if !canHideCompletedPluginLoadingSession(&session, &current, generation) {
+        return;
+    }
+    updatePluginLoadingProgress(|progress| {
+        progress.visible = false;
+        progress.forceExpanded = false;
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Builds a progress snapshot for delayed-hide ownership assertions.
+    fn progressSnapshot(phase: &str) -> PluginLoadingProgress {
+        PluginLoadingProgress {
+            visible: true,
+            forceExpanded: false,
+            progress: 1.0,
+            phase: phase.to_string(),
+            currentTask: String::new(),
+            pluginsStarted: 1,
+            pluginsTotal: 1,
+            plugins: Vec::new(),
+        }
+    }
+
+    /// Verifies that a newer active session blocks an older hide task.
+    #[test]
+    fn delayedHideRejectsNewActiveSession() {
+        let session = PluginLoadingSessionState {
+            generation: 2,
+            active: true,
+        };
+        let progress = progressSnapshot("complete_success");
+        assert!(!canHideCompletedPluginLoadingSession(
+            &session, &progress, 1
+        ));
+    }
+
+    /// Verifies that a completed generation can hide its own overlay.
+    #[test]
+    fn delayedHideAcceptsCompletedGeneration() {
+        let session = PluginLoadingSessionState {
+            generation: 2,
+            active: false,
+        };
+        let progress = progressSnapshot("complete_with_failures");
+        assert!(canHideCompletedPluginLoadingSession(&session, &progress, 2));
+    }
 }

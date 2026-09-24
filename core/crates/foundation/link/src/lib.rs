@@ -27,6 +27,6 @@ pub use protocol::{
     PeerWatchEvent, PeerWatchOpenRequest, RoutedCoreRequest, RoutedCoreRequestKind,
 };
 pub use route_runtime::{
-    clearCoreRouteRuntime, coreForceLocal, coreRouteRuntime, installCoreRouteRuntime,
-    nextCoreRouteRequestId, withCoreForceLocal, CoreRouteRuntime,
+    clearCoreRouteRuntime, coreForceLocal, coreRouteRuntime, coreRouteWatchSnapshot,
+    installCoreRouteRuntime, nextCoreRouteRequestId, withCoreForceLocal, CoreRouteRuntime,
 };

@@ -201,7 +201,7 @@ fn parseCatalogBuiltinTools(
         return Ok(Vec::new());
     }
     let (requestFormat, exclusivity) = match providerTypeId.trim() {
-        "OPENAI_RESPONSES" | "OPENAI_RESPONSES_GENERIC" | "DEEPSEEK" => (
+        "OPENAI_RESPONSES" | "OPENAI_RESPONSES_GENERIC" | "DEEPSEEK" | "OPENAI_CODEX" => (
             BuiltinToolRequestFormat::OpenAiWebSearch,
             BuiltinToolExclusivity::CanMixWithExternalTools,
         ),
@@ -423,5 +423,17 @@ mod tests {
         assert!(operation.requiresApiKey);
         assert_eq!(operation.result.itemsJsonPath.as_deref(), Some("$.data"));
         assert_eq!(operation.result.itemIdJsonPath.as_deref(), Some("$.id"));
+    }
+
+    #[test]
+    fn openai_codex_provider_has_catalog_models_with_fast_variants() {
+        let provider = ModelCatalog::provider("OPENAI_CODEX").expect("OPENAI_CODEX catalog entry");
+        assert!(!provider.models.is_empty());
+        assert!(provider.models.iter().any(|model| model.modelId == "gpt-5.5"));
+        assert!(provider.models.iter().any(|model| model.modelId == "gpt-5.5-fast"));
+        assert!(provider.models.iter().any(|model| model.modelId == "gpt-5.4"));
+        assert!(provider.models.iter().any(|model| model.modelId == "gpt-5.4-fast"));
+        assert!(provider.models.iter().any(|model| model.modelId == "gpt-6-astra"));
+        assert!(provider.models.iter().any(|model| model.modelId == "gpt-6-astra-fast"));
     }
 }

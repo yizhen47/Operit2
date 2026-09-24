@@ -19,6 +19,7 @@ import '../../../../../settings/model/ProviderLogo.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../ChatLayoutMetrics.dart';
 import '../common/ChatAttachmentImagePreview.dart';
+import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
 import 'AgentInputMenuPopup.dart';
@@ -613,6 +614,13 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
+              if (widget.currentChatId != null)
+                ChatComposerSlotHost(
+                  viewModel: widget.viewModel,
+                  chatId: widget.currentChatId!,
+                  isProcessing: processing,
+                  pendingQueueCount: widget.pendingQueueMessages.length,
+                ),
               if (widget.pendingQueueMessages.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),

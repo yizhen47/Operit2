@@ -186,6 +186,23 @@ impl ToolPkgInputMenuToggleBridge {
         InputMenuTogglePluginRegistry::notifyChanged();
     }
 
+    /// Invalidates input-menu toggle definitions after input hooks mutate plugin-owned state.
+    #[allow(non_snake_case)]
+    pub fn invalidateToggleDefinitions() {
+        INPUT_MENU_SPECS_CACHE
+            .get_or_init(|| Mutex::new(Vec::new()))
+            .lock()
+            .expect("toolpkg input menu specs mutex poisoned")
+            .clear();
+        HAS_LOADED_ONCE.store(false, Ordering::SeqCst);
+        *LAST_PARAMS_CACHE_KEY
+            .get_or_init(|| Mutex::new(None))
+            .lock()
+            .expect("toolpkg input menu params cache mutex poisoned") = None;
+        HOOK_REGISTRY_VERSION.fetch_add(1, Ordering::SeqCst);
+        InputMenuTogglePluginRegistry::notifyChanged();
+    }
+
     #[allow(non_snake_case)]
     pub fn createToggleDefinitions(
         &self,

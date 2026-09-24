@@ -423,7 +423,14 @@ fn builtinRoles() -> BTreeMap<String, NetworkControlRole> {
         builtinRole(
             "user",
             "User",
-            [NETWORK_DEVICES_VIEW_CAPABILITY, "network.user"],
+            [
+                NETWORK_DEVICES_VIEW_CAPABILITY,
+                "network.user",
+                "chat.read",
+                "network.relay",
+                "storage.provide",
+                "runtime.execute",
+            ],
         ),
         builtinRole("relay", "Relay", ["network.relay"]),
         builtinRole("storage", "Storage", ["storage.provide"]),

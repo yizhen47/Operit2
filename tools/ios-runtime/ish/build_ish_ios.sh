@@ -24,6 +24,9 @@ build_products_dir="$repo_dir/apps/flutter/app/apple/ish-build/${configuration}-
 linux_configuration="${configuration}Linux"
 linux_meson_build_dir="$build_products_dir/meson-linux"
 cache_marker="$build_products_dir/.operit-ish-build-complete"
+source_signature="$(shasum -a 256 "$script_dir/build_ish_ios.sh" "$script_dir/fetch_sources.py" "$script_dir"/patches/*.patch | awk '{print $1}' | shasum -a 256 | awk '{print $1}')"
+sdk_version="$(xcrun --sdk "$sdk_name" --show-sdk-version)"
+build_signature="$configuration:$sdk_version:$platform_name:$architectures:$source_signature"
 
 # Reuses a verified static-library set restored by the CI cache.
 verify_cached_build_products() {
@@ -42,6 +45,9 @@ verify_cached_build_products() {
     if [[ ! -f "$cache_marker" ]]; then
         return 1
     fi
+    if [[ "$(<"$cache_marker")" != "$build_signature" ]]; then
+        return 1
+    fi
     for library_name in "${cached_libraries[@]}"; do
         if [[ ! -f "$build_products_dir/$library_name" ]]; then
             return 1
@@ -55,10 +61,7 @@ verify_cached_build_products() {
     return 0
 }
 
-if verify_cached_build_products; then
-    exit 0
-fi
-
+# Prepares patched headers required by Runner even when static libraries are cached.
 python3 "$script_dir/fetch_sources.py"
 
 test -d "$source_dir"
@@ -67,6 +70,10 @@ test -f "$rootfs_path"
 for patch_path in "$script_dir"/patches/*.patch; do
     /usr/bin/patch -d "$source_dir" -p1 -i "$patch_path"
 done
+
+if verify_cached_build_products; then
+    exit 0
+fi
 
 # Builds one pinned iSH static target into the Runner-owned products directory.
 build_target() {
@@ -158,4 +165,4 @@ verify_static_library libish_emu.a
 verify_static_library libarchive.a
 verify_static_library libiSHFakefs.a
 verify_static_library libiSHFchdir.a
-touch "$cache_marker"
+printf '%s\n' "$build_signature" > "$cache_marker"

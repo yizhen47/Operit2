@@ -539,7 +539,44 @@ pub fn buildComposeDslContextBridgeDefinition() -> String {
                     return controller;
                 }
 
+                var themeSnapshot;
+                var themeListeners = new Set();
+                /** Validates and detaches one resolved UI host theme. */
+                function readThemeSnapshot(value) {
+                    if (!value || (value.brightness !== 'light' && value.brightness !== 'dark') ||
+                        !value.colors || typeof value.colors !== 'object' || Array.isArray(value.colors)) {
+                        throw new Error('Theme requires a resolved UI host snapshot');
+                    }
+                    var colors = Object.assign({}, value.colors);
+                    Object.keys(colors).forEach(function(role) {
+                        if (typeof colors[role] !== 'string' || !/^#[0-9a-fA-F]{8}$/.test(colors[role])) {
+                            throw new Error('Invalid Theme color: ' + role);
+                        }
+                    });
+                    return Object.freeze({ brightness: value.brightness, colors: Object.freeze(colors) });
+                }
+                if (options.theme !== undefined) themeSnapshot = readThemeSnapshot(options.theme);
+                /** Delivers host theme changes through the existing UI action lifecycle. */
+                runtime.actionStore.__operit_theme_changed = async function(value) {
+                    var next = readThemeSnapshot(value);
+                    if (JSON.stringify(next) === JSON.stringify(themeSnapshot)) return;
+                    themeSnapshot = next;
+                    for (var listener of Array.from(themeListeners)) await listener(next);
+                };
                 var ctx = {
+                    Theme: {
+                        /** Returns the immutable snapshot owned by this UI context. */
+                        getCurrent: function() {
+                            if (!themeSnapshot) throw new Error('Theme is unavailable outside a configured UI host');
+                            return themeSnapshot;
+                        },
+                        /** Registers a listener until explicitly removed or the UI context is released. */
+                        subscribe: function(listener) {
+                            if (typeof listener !== 'function') throw new TypeError('Theme listener must be a function');
+                            themeListeners.add(listener);
+                            return function() { themeListeners.delete(listener); };
+                        }
+                    },
                     MaterialTheme: { colorScheme: colorScheme },
                     useState: function(key, initialValue) {
                         var stateKey = String(key || '').trim();

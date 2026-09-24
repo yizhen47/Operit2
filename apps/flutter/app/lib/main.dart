@@ -46,14 +46,26 @@ void main(List<String> arguments) async {
         'client log hooks installed elapsedMs=${hooksStopwatch.elapsedMilliseconds}',
         tag: _appStartupLogTag,
       );
-      NotificationActivationService.instance.initialize(arguments);
-      final runtimeStopwatch = Stopwatch()..start();
-      await RuntimeBootstrapManager.instance.initialize();
-      ClientLogger.attachPersistentStorage();
-      ClientLogger.i(
-        'runtime bootstrap initialized elapsedMs=${runtimeStopwatch.elapsedMilliseconds}',
-        tag: _appStartupLogTag,
-      );
+      final startsDetachedChatWindow = _startsDetachedChatWindow(arguments);
+      if (startsDetachedChatWindow) {
+        ClientLogger.i(
+          'skip process-owned startup for detached chat window',
+          tag: _appStartupLogTag,
+        );
+        await RuntimeBootstrapManager.instance.initializeForDetachedWindow();
+        ClientLogger.i(
+          'detached runtime bootstrap state loaded',
+          tag: _appStartupLogTag,
+        );
+      } else {
+        NotificationActivationService.instance.initialize(arguments);
+        final runtimeStopwatch = Stopwatch()..start();
+        await RuntimeBootstrapManager.instance.initialize();
+        ClientLogger.i(
+          'runtime bootstrap initialized elapsedMs=${runtimeStopwatch.elapsedMilliseconds}',
+          tag: _appStartupLogTag,
+        );
+      }
       final glassStopwatch = Stopwatch()..start();
       await LiquidGlassWidgets.initialize();
       ClientLogger.i(
@@ -108,6 +120,19 @@ void main(List<String> arguments) async {
       });
     },
   );
+}
+
+/// Identifies a detached chat engine from the launch contract before startup services run.
+bool _startsDetachedChatWindow(List<String> arguments) {
+  if (arguments.length < 3 || arguments[0] != 'multi_window') {
+    return false;
+  }
+  try {
+    return OperitWindowArguments.parse(arguments[2])
+        is DetachedChatWindowArguments;
+  } catch (_) {
+    return false;
+  }
 }
 
 /// Starts the main application window without touching runtime services.

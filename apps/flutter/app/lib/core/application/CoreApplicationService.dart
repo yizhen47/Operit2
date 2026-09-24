@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import 'PluginHotReload.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -59,6 +60,7 @@ class CoreApplicationService with WidgetsBindingObserver {
     final stopwatch = Stopwatch()..start();
     ClientLogger.i('initialize start', tag: _logTag);
     _initialized = true;
+    PluginHotReload.register(_coreClients);
     WidgetsBinding.instance.addObserver(this);
     _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
     unawaited(_startRuntimeServices());
@@ -178,6 +180,7 @@ class CoreApplicationService with WidgetsBindingObserver {
       return;
     }
     try {
+      ClientLogger.attachPersistentStorage();
       ClientLogger.i(
         'runtime services start localConfirmed=${_runtimeManager.config.confirmed}',
         tag: _logTag,

@@ -15,6 +15,7 @@ import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import '../web_visit/WebVisitBridge.dart';
 import '../web_visit/WebVisitModels.dart';
+import 'AppToastController.dart';
 import 'ComposeDslFilePickerService.dart';
 import 'ComposeWebViewControllerBridge.dart';
 import 'browser/RuntimeBrowserSessionRegistry.dart';
@@ -257,9 +258,6 @@ class RuntimeHostInteractionSubscriber {
       RuntimeHostInteractionKind.localInference => _handleLocalInference(
         _requirePayload(request.localInference, request.kind),
       ),
-      RuntimeHostInteractionKind.toolPermission => throw StateError(
-        'tool permission is handled by the approval bridge',
-      ),
       RuntimeHostInteractionKind.webAccessPairing => throw StateError(
         'web access pairing is handled by the app dialog host',
       ),
@@ -487,6 +485,9 @@ class RuntimeHostInteractionSubscriber {
   static Future<RuntimeHostInteractionResponse> _handleSystemOperation(
     RuntimeHostInteractionSystemOperationPayload payload,
   ) async {
+    if (payload.operation == 'toast') {
+      return _handleToastOperation(payload);
+    }
     final rawResponse = await _channel.invokeMethod<Object?>(
       'ownerSystemOperation',
       payload.toJson(),
@@ -495,6 +496,26 @@ class RuntimeHostInteractionSubscriber {
       _requireMethodResponseMap(rawResponse, 'ownerSystemOperation'),
     );
     return _response(systemOperation: response);
+  }
+
+  /// Presents one system-operation toast inside the Flutter application.
+  static RuntimeHostInteractionResponse _handleToastOperation(
+    RuntimeHostInteractionSystemOperationPayload payload,
+  ) {
+    final decoded = jsonDecode(payload.paramsJson);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('toast paramsJson must be an object');
+    }
+    final message = decoded['message'];
+    if (message is! String || message.trim().isEmpty) {
+      throw const FormatException('toast message must be a non-empty string');
+    }
+    AppToastController.instance.show(message);
+    return _response(
+      systemOperation: RuntimeHostInteractionSystemOperationResponse(
+        resultJson: jsonEncode(<String, Object?>{'success': true}),
+      ),
+    );
   }
 
   static Future<RuntimeHostInteractionResponse> _handleAudioPlay(
@@ -690,7 +711,6 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionTtsSynthesisResponse? ttsSynthesis,
     RuntimeHostInteractionTtsPlaybackResponse? ttsPlayback,
     RuntimeHostInteractionLocalInferenceResponse? localInference,
-    RuntimeHostInteractionToolPermissionResponse? toolPermission,
   }) {
     return RuntimeHostInteractionResponse(
       error: error,
@@ -711,7 +731,6 @@ class RuntimeHostInteractionSubscriber {
       ttsSynthesis: ttsSynthesis,
       ttsPlayback: ttsPlayback,
       localInference: localInference,
-      toolPermission: toolPermission,
     );
   }
 }

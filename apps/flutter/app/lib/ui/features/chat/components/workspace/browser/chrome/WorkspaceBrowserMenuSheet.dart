@@ -16,7 +16,8 @@ class WorkspaceBrowserMenuSheet extends StatefulWidget {
     required this.onClearStorage,
     required this.zoomLabel,
     required this.onZoomOut,
-    required this.onZoomReset,
+    required this.zoomButtonKey,
+    required this.onZoomMenuRequested,
     required this.onZoomIn,
     required this.desktopMode,
     required this.onDesktopModeChanged,
@@ -33,7 +34,8 @@ class WorkspaceBrowserMenuSheet extends StatefulWidget {
   final VoidCallback onClearStorage;
   final String zoomLabel;
   final VoidCallback onZoomOut;
-  final VoidCallback onZoomReset;
+  final GlobalKey zoomButtonKey;
+  final VoidCallback onZoomMenuRequested;
   final VoidCallback onZoomIn;
   final bool desktopMode;
   final ValueChanged<bool> onDesktopModeChanged;
@@ -119,7 +121,8 @@ class _WorkspaceBrowserMenuSheetState extends State<WorkspaceBrowserMenuSheet> {
             title: l10n.zoom,
             value: widget.zoomLabel,
             onZoomOut: widget.onZoomOut,
-            onZoomReset: widget.onZoomReset,
+            zoomButtonKey: widget.zoomButtonKey,
+            onZoomMenuRequested: widget.onZoomMenuRequested,
             onZoomIn: widget.onZoomIn,
           ),
           _MenuTile(
@@ -146,7 +149,8 @@ class _MenuActionRow extends StatelessWidget {
     required this.title,
     required this.value,
     required this.onZoomOut,
-    required this.onZoomReset,
+    required this.zoomButtonKey,
+    required this.onZoomMenuRequested,
     required this.onZoomIn,
   });
 
@@ -154,7 +158,8 @@ class _MenuActionRow extends StatelessWidget {
   final String title;
   final String value;
   final VoidCallback onZoomOut;
-  final VoidCallback onZoomReset;
+  final GlobalKey zoomButtonKey;
+  final VoidCallback onZoomMenuRequested;
   final VoidCallback onZoomIn;
 
   @override
@@ -191,9 +196,10 @@ class _MenuActionRow extends StatelessWidget {
               padding: EdgeInsets.zero,
             ),
             const SizedBox(width: 4),
-            InkWell(
-              onTap: onZoomReset,
-              borderRadius: BorderRadius.circular(6),
+            GestureDetector(
+              key: zoomButtonKey,
+              behavior: HitTestBehavior.opaque,
+              onTap: onZoomMenuRequested,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                 child: Text(

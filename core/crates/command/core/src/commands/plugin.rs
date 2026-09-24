@@ -22,6 +22,8 @@ pub fn run_plugin_command(
             Ok(())
         }
         "list" => list_plugins(tool_handler, output),
+        "commands" => list_plugin_commands(tool_handler, output),
+        "exec" => execute_plugin_command(tool_handler, &args[1..], output),
         "more" => list_more_plugins(tool_handler, output),
         "show" => {
             let name = args
@@ -63,6 +65,54 @@ pub fn run_plugin_command(
             Ok(())
         }
     }
+}
+
+/// Lists slash commands registered by enabled ToolPkg plugins.
+fn list_plugin_commands(
+    tool_handler: AIToolHandler,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let package_manager = package_manager(&tool_handler);
+    let guard = package_manager
+        .lock()
+        .expect("package manager mutex poisoned");
+    let commands = guard.getToolPkgCoreCommands(false)?;
+    output.push_stdout_line(format!("Plugin commands: {}", commands.len()));
+    for command in &commands {
+        output.push_stdout_line(format!(
+            "- {} — {} ({})",
+            command.usage, command.description, command.containerPackageName
+        ));
+    }
+    output.setJsonStdout(serde_json::to_value(commands).expect("plugin commands must serialize"));
+    Ok(())
+}
+
+/// Executes one slash command registered by an enabled ToolPkg plugin.
+fn execute_plugin_command(
+    tool_handler: AIToolHandler,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let command_name = args
+        .first()
+        .ok_or_else(|| "usage: operit2 plugin exec <command> [args...]".to_string())?;
+    let package_manager = package_manager(&tool_handler);
+    let manager = package_manager
+        .lock()
+        .expect("package manager mutex poisoned")
+        .clone();
+    let result =
+        manager.executeToolPkgCoreCommand(command_name, &args[1..], output.isJsonMode())?;
+    if output.isJsonMode() {
+        output.setJsonStdout(result.json.ok_or_else(|| {
+            format!("plugin command /{command_name} did not return a JSON result")
+        })?);
+    } else {
+        output.push_stdout(result.stdout);
+        output.push_stderr(result.stderr);
+    }
+    Ok(())
 }
 
 /// Lists loaded ToolPkg plugins.
@@ -355,6 +405,8 @@ fn print_plugin_usage(output: &mut CoreCommandOutput) {
     let lines = vec![
         "operit2 plugin help",
         "operit2 plugin list                         List loaded ToolPkg plugins.",
+        "operit2 plugin commands                     List slash commands from enabled ToolPkg plugins.",
+        "operit2 plugin exec <command> [args...]     Execute a ToolPkg slash command.",
         "operit2 plugin more                         List app-bundled official extras not loaded yet; type=toolpkg/script.",
         "operit2 plugin load <name>                  Load one item from 'plugin more' into the user package directory.",
         "operit2 plugin show <name>                  Show a loaded ToolPkg plugin.",

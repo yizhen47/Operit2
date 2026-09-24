@@ -55,7 +55,7 @@ impl IosTerminalHost {
         }
     }
 
-    /// Mounts an App-owned directory into the embedded iSH filesystem for MCP execution.
+    /// Shares a host directory with iSH at the same absolute path.
     pub fn mountManagedRuntimeDirectory(
         &self,
         hostDirectory: &str,
@@ -382,7 +382,7 @@ impl TerminalHost for IosTerminalHost {
 
     /// Lists active iSH and system-shell sessions with their exact terminal identities.
     fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
-        let ishResponse = callIshTerminal("terminalList", Value::Null)?;
+        let ishResponse = callIshTerminal("terminalList", json!({}))?;
         let ishSessions = ishResponse
             .get("sessions")
             .and_then(Value::as_array)

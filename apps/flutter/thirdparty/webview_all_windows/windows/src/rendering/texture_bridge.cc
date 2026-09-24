@@ -11,9 +11,6 @@
 #include "util/logging.h"
 
 namespace webview_all_windows {
-namespace {
-const int kNumBuffers = 1;
-} // namespace
 
 TextureBridge::TextureBridge(GraphicsContext *graphics_context,
                              ABI::Windows::UI::Composition::IVisual *visual)
@@ -117,6 +114,7 @@ void TextureBridge::StopInternal() {
   }
 }
 
+/// Copies a capture frame into bridge storage, then returns the pool buffer.
 void TextureBridge::OnFrameArrived() {
   bool has_frame = false;
   FrameAvailableCallback frame_available;
@@ -126,18 +124,24 @@ void TextureBridge::OnFrameArrived() {
       return;
     }
 
-    winrt::com_ptr<ABI::Windows::Graphics::Capture::IDirect3D11CaptureFrame>
-        frame;
-    auto hr = frame_pool_->TryGetNextFrame(frame.put());
-    if (SUCCEEDED(hr) && frame) {
-      winrt::com_ptr<
-          ABI::Windows::Graphics::DirectX::Direct3D11::IDirect3DSurface>
-          frame_surface;
+    {
+      winrt::com_ptr<ABI::Windows::Graphics::Capture::IDirect3D11CaptureFrame>
+          frame;
+      auto hr = frame_pool_->TryGetNextFrame(frame.put());
+      if (SUCCEEDED(hr) && frame) {
+        winrt::com_ptr<
+            ABI::Windows::Graphics::DirectX::Direct3D11::IDirect3DSurface>
+            frame_surface;
 
-      if (SUCCEEDED(frame->get_Surface(frame_surface.put()))) {
-        last_frame_ =
-            util::TryGetDXGIInterfaceFromObject<ID3D11Texture2D>(frame_surface);
-        has_frame = !ShouldDropFrame();
+        if (SUCCEEDED(frame->get_Surface(frame_surface.put()))) {
+          auto captured =
+              util::TryGetDXGIInterfaceFromObject<ID3D11Texture2D>(frame_surface);
+          if (captured && !ShouldDropFrame() &&
+              PublishCapturedTexture(captured.get())) {
+            ++frame_generation_;
+            has_frame = true;
+          }
+        }
       }
     }
 
@@ -186,6 +190,9 @@ void TextureBridge::NotifySurfaceSizeChanged() {
   needs_update_ = true;
 }
 
+/// Returns no readback hold; the GPU bridge keeps its published slot alive.
+std::function<void()> TextureBridge::RetainReadback() { return {}; }
+
 void TextureBridge::SetFpsLimit(std::optional<int> max_fps) {
   const std::lock_guard<std::mutex> lock(mutex_);
   auto value = max_fps.value_or(0);
@@ -206,9 +213,13 @@ bool TextureBridge::HasLatestFrame() {
 // Queues one captured texture for CPU readback on the worker thread.
 void TextureBridge::CopyLatestFrameAsync(FrameCopyCallback callback) {
   winrt::com_ptr<ID3D11Texture2D> texture;
+  std::function<void()> release_readback;
   {
     const std::lock_guard<std::mutex> lock(mutex_);
     texture = last_frame_;
+    if (texture) {
+      release_readback = RetainReadback();
+    }
   }
   if (!texture) {
     callback(false, {}, {0, 0});
@@ -221,8 +232,8 @@ void TextureBridge::CopyLatestFrameAsync(FrameCopyCallback callback) {
       frame_readback_thread_ =
           std::thread([this]() { RunFrameReadbackWorker(); });
     }
-    frame_readback_requests_.push_back(
-        FrameReadbackRequest{std::move(texture), std::move(callback)});
+    frame_readback_requests_.push_back(FrameReadbackRequest{
+        std::move(texture), std::move(callback), std::move(release_readback)});
   }
   frame_readback_condition_.notify_one();
 }
@@ -262,6 +273,9 @@ void TextureBridge::RunFrameReadbackWorker() {
     std::vector<uint8_t> data;
     Size size = {0, 0};
     const bool success = CopyFrame(request.texture.get(), &data, &size);
+    if (request.release_readback) {
+      request.release_readback();
+    }
     request.callback(success, data, size);
   }
 }
@@ -269,6 +283,7 @@ void TextureBridge::RunFrameReadbackWorker() {
 // Copies one GPU texture into tightly packed BGRA bytes.
 bool TextureBridge::CopyFrame(ID3D11Texture2D *texture,
                               std::vector<uint8_t> *bytes, Size *size) {
+  const std::lock_guard<std::mutex> lock(mutex_);
   if (!texture || !bytes || !size) {
     return false;
   }

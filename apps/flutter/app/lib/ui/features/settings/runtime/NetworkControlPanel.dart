@@ -40,6 +40,12 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
     unawaited(_reload());
   }
 
+  /// Reloads network control and device-space relationship settings.
+  Future<void> _reloadSettings() async {
+    await _reload();
+    await widget.onChanged();
+  }
+
   /// Reads the current synchronized state and device projection.
   Future<void> _reload() async {
     try {
@@ -87,7 +93,7 @@ class _NetworkControlPanelState extends State<NetworkControlPanel> {
               tooltip: MaterialLocalizations.of(
                 context,
               ).refreshIndicatorSemanticLabel,
-              onPressed: _reload,
+              onPressed: _reloadSettings,
               icon: const Icon(Icons.refresh_outlined),
             ),
           ],
@@ -948,6 +954,7 @@ String _capabilityLabel(String capability, AppLocalizations l10n) {
     'storage.provide' => l10n.settingsRuntimeControlCapabilityStorageProvide,
     'runtime.execute' => l10n.settingsRuntimeControlCapabilityRuntimeExecute,
     'network.user' => l10n.settingsRuntimeControlCapabilityNetworkUser,
+    'chat.read' => l10n.settingsRuntimeControlCapabilityChatRead,
     'network.identity.manage' => l10n.settingsRuntimeControlManageIdentities,
     'network.identity.assign' => l10n.settingsRuntimeControlAssignIdentity,
     'network.approval' => l10n.settingsRuntimeControlCapabilityApproval,
@@ -978,6 +985,10 @@ List<_Choice> _capabilityChoices(AppLocalizations l10n) {
     _Choice(
       label: l10n.settingsRuntimeControlCapabilityRuntimeExecute,
       value: 'runtime.execute',
+    ),
+    _Choice(
+      label: l10n.settingsRuntimeControlCapabilityChatRead,
+      value: 'chat.read',
     ),
     _Choice(
       label: l10n.settingsRuntimeControlManageIdentities,

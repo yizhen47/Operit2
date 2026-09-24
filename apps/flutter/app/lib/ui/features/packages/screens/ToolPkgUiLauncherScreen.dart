@@ -1,12 +1,16 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
+import '../../../../core/application/PluginHotReload.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import '../../../../core/link/CoreLinkProtocol.dart';
+import '../../../../core/logging/ClientLogger.dart';
+import '../../../../core/theme/PluginThemeSnapshot.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -45,6 +49,8 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
     required this.plugin,
     this.initialRouteId,
     this.showLauncherChrome = true,
+    this.showLoadingIndicator = true,
+    this.dialogTitle,
     this.initialState = const <String, Object?>{},
     this.initialMemo = const <String, Object?>{},
     this.initialModuleSpec,
@@ -54,6 +60,10 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
   final core_proxy.ToolPkgContainerRuntime plugin;
   final String? initialRouteId;
   final bool showLauncherChrome;
+  final bool showLoadingIndicator;
+
+  /// Embeds the screen in the modal route owned by its caller.
+  final String? dialogTitle;
   final Map<String, Object?> initialState;
   final Map<String, Object?> initialMemo;
   final Map<String, Object?>? initialModuleSpec;
@@ -65,6 +75,7 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
 
 class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   static int _nextExecutionOwnerId = 0;
+  static const String _logTag = 'ToolPkgUiLauncher';
 
   late final int _executionOwnerId = _nextExecutionOwnerId++;
   late final String _selectedRouteId = _initialRouteId();
@@ -75,8 +86,10 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   bool _loadedInitialRoute = false;
   int _routeLoadGeneration = 0;
   String _currentLanguageTag = 'en';
+  ColorScheme? _themeScheme;
   String? _error;
   Future<Object?> _actionTail = Future<Object?>.value();
+  final Set<StreamSubscription<String>> _detachedComposeEventSubscriptions = {};
 
   GeneratedApplicationPackageManagerCoreProxy get _packageManager =>
       widget.clients.application.packageManager();
@@ -85,11 +98,27 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   void initState() {
     super.initState();
     ComposeDslWebViewHostRegistry.ensureHostInteractionRegistered();
+    PluginHotReload.revision.addListener(_reloadDevelopmentPackage);
+  }
+
+  /// Recreates the visible plugin document after runtime packages reload.
+  void _reloadDevelopmentPackage() {
+    setState(() {
+      _renderResult = null;
+      _loading = true;
+      _activeExecutionContext = null;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loadRoute());
+    });
   }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final scheme = Theme.of(context).colorScheme;
+    final themeChanged = _themeScheme != scheme;
+    _themeScheme = scheme;
     final languageTag = _resolveCurrentLanguage();
     final shouldLoadRoute =
         !_loadedInitialRoute || languageTag != _currentLanguageTag;
@@ -101,12 +130,56 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           _loadRoute();
         }
       });
+    } else if (themeChanged) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_loading) unawaited(_notifyThemeChanged());
+      });
+    }
+  }
+
+  /// Sends the current UI theme through the normal serialized plugin action lifecycle.
+  Future<void> _notifyThemeChanged() async {
+    final scheme = _themeScheme!;
+    final uiModuleId = _selectedUiModuleId();
+    final routeInstanceId = _selectedRouteInstanceId();
+    final executionContextKey = _executionContextKey(
+      uiModuleId: uiModuleId,
+      routeInstanceId: routeInstanceId,
+    );
+    ClientLogger.i(
+      'event=theme_dispatch_start package=${widget.plugin.packageName} '
+      'context=$executionContextKey brightness=${scheme.brightness.name} '
+      'primary=${scheme.primary.toARGB32().toRadixString(16)}',
+      tag: _logTag,
+    );
+    try {
+      await _dispatchAction(
+        '__operit_theme_changed',
+        pluginThemeSnapshot(scheme),
+      );
+      ClientLogger.i(
+        'event=theme_dispatch_done package=${widget.plugin.packageName} '
+        'context=$executionContextKey',
+        tag: _logTag,
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'event=theme_dispatch_failed package=${widget.plugin.packageName} '
+        'context=$executionContextKey',
+        tag: _logTag,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
     }
   }
 
   String _initialRouteId() {
     final requested = widget.initialRouteId?.trim();
     if (requested != null && requested.isNotEmpty) {
+      if (_embeddedScreenPath() != null) {
+        return requested;
+      }
       final matched = widget.plugin.uiRoutes.any(
         (route) => route.routeId == requested || route.id == requested,
       );
@@ -165,23 +238,43 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           return;
         }
       }
-      final script = await _packageManager.getToolPkgComposeDslScript(
-        containerPackageName: widget.plugin.packageName,
-        uiModuleId: uiModuleId,
-      );
-      final screenPath = await _packageManager.getToolPkgComposeDslScreenPath(
-        containerPackageName: widget.plugin.packageName,
-        uiModuleId: uiModuleId,
-      );
+      final embeddedScreenPath = _embeddedScreenPath();
+      final String? script;
+      final String? screenPath;
+      if (embeddedScreenPath != null) {
+        script = await _packageManager.readToolPkgTextResource(
+          packageNameOrSubpackageId: widget.plugin.packageName,
+          resourcePath: embeddedScreenPath,
+          preferEnabledContainer: true,
+        );
+        screenPath = embeddedScreenPath;
+      } else {
+        script = await _packageManager.getToolPkgComposeDslScript(
+          containerPackageName: widget.plugin.packageName,
+          uiModuleId: uiModuleId,
+        );
+        screenPath = await _packageManager.getToolPkgComposeDslScreenPath(
+          containerPackageName: widget.plugin.packageName,
+          uiModuleId: uiModuleId,
+        );
+      }
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
         return;
       }
       if (script == null || script.trim().isEmpty) {
+        if (embeddedScreenPath != null) {
+          throw StateError(
+            'compose_dsl screen not found: '
+            'package=${widget.plugin.packageName}, screen=$embeddedScreenPath',
+          );
+        }
         throw StateError(
-          'compose_dsl script not found: package=${widget.plugin.packageName}, module=$uiModuleId',
+          'compose_dsl script not found: '
+          'package=${widget.plugin.packageName}, module=$uiModuleId',
         );
       }
       _scriptScreenPath = screenPath;
+      final renderedTheme = _themeScheme;
       final raw = await _packageManager.executeToolPkgComposeDslScript(
         contextKey: executionContextKey,
         containerPackageName: widget.plugin.packageName,
@@ -204,6 +297,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
         _renderResult = result;
         _loading = false;
       });
+      if (_themeScheme != renderedTheme) {
+        _scheduleThemeDispatchAfterRouteRender(routeLoadGeneration);
+      }
       _navigateCommands(_ComposeDslRenderResult.navigationCommandsOf(raw));
     } catch (error, stackTrace) {
       if (!_isCurrentRouteLoad(routeLoadGeneration)) {
@@ -219,6 +315,15 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
 
   bool _isCurrentRouteLoad(int routeLoadGeneration) {
     return mounted && routeLoadGeneration == _routeLoadGeneration;
+  }
+
+  /// Dispatches a theme change after Flutter has bound controllers from the new tree.
+  void _scheduleThemeDispatchAfterRouteRender(int routeLoadGeneration) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isCurrentRouteLoad(routeLoadGeneration) && !_loading) {
+        unawaited(_notifyThemeChanged());
+      }
+    });
   }
 
   /// Acquires one page-owned ToolPkg execution context.
@@ -244,6 +349,11 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   /// Releases the active ToolPkg context when this page leaves the widget tree.
   @override
   void dispose() {
+    PluginHotReload.revision.removeListener(_reloadDevelopmentPackage);
+    for (final subscription in _detachedComposeEventSubscriptions) {
+      unawaited(subscription.cancel());
+    }
+    _detachedComposeEventSubscriptions.clear();
     _routeLoadGeneration += 1;
     final executionContext = _activeExecutionContext;
     _activeExecutionContext = null;
@@ -297,54 +407,88 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     final navigationCommands =
         <({String routeId, Map<String, Object?> args})>[];
     try {
-      await for (final event
-          in _packageManager.dispatchToolPkgComposeDslActionEvents(
-            contextKey: executionContextKey,
-            containerPackageName: widget.plugin.packageName,
-            actionId: actionId,
-            payload: payload,
-            runtimeOptions: _runtimeOptions(
-              uiModuleId: uiModuleId,
-              routeInstanceId: routeInstanceId,
-              executionContextKey: executionContextKey,
-            ),
-            envOverrides: const <String, String>{},
-          )) {
-        if (!mounted) {
-          return latestActionResult;
-        }
-        final parsedEvent = _ParsedComposeDslActionEvent.parse(event);
-        final phase = parsedEvent.phase;
-        if (phase == 'intermediate' || phase == 'final') {
-          latestActionResult = parsedEvent.actionResult;
-          navigationCommands.addAll(parsedEvent.navigationCommands);
-          final result = parsedEvent.renderResult;
-          if (result == null) {
-            continue;
-          }
+      final rootActionId = _actionId(_renderResult?.tree.props['onLoad']);
+      final keepDetachedEvents =
+          widget.initialModuleSpec?['slot'] == 'above_input' &&
+          rootActionId == actionId;
+      final runtimeOptions = _runtimeOptions(
+        uiModuleId: uiModuleId,
+        routeInstanceId: routeInstanceId,
+        executionContextKey: executionContextKey,
+      )..['__operit_keep_compose_event_stream'] = keepDetachedEvents;
+      final eventStream = _packageManager.dispatchToolPkgComposeDslActionEvents(
+        contextKey: executionContextKey,
+        containerPackageName: widget.plugin.packageName,
+        actionId: actionId,
+        payload: payload,
+        runtimeOptions: runtimeOptions,
+        envOverrides: const <String, String>{},
+      );
+      final completion = Completer<void>();
+      late final StreamSubscription<String> subscription;
+      subscription = eventStream.listen(
+        (event) {
           if (!mounted) {
-            return latestActionResult;
+            if (!completion.isCompleted) {
+              completion.complete();
+            }
+            unawaited(subscription.cancel());
+            return;
           }
-          setState(() {
-            _renderResult = result;
-            _error = null;
-          });
-        } else if (phase == 'error') {
-          final errorText = parsedEvent.errorText;
-          if (errorText == null) {
-            throw StateError('compose_dsl action error event missing error');
+          final parsedEvent = _ParsedComposeDslActionEvent.parse(event);
+          final phase = parsedEvent.phase;
+          if (phase == 'intermediate' || phase == 'final') {
+            latestActionResult = parsedEvent.actionResult;
+            navigationCommands.addAll(parsedEvent.navigationCommands);
+            final result = parsedEvent.renderResult;
+            if (result == null) {
+              return;
+            }
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _renderResult = result;
+              _error = null;
+            });
+          } else if (phase == 'error') {
+            final errorText = parsedEvent.errorText;
+            if (errorText == null) {
+              if (!completion.isCompleted) {
+                completion.completeError(
+                  StateError('compose_dsl action error event missing error'),
+                );
+              }
+              return;
+            }
+            if (!mounted) {
+              return;
+            }
+            setState(() {
+              _error = errorText;
+            });
+            if (!completion.isCompleted) {
+              completion.completeError(StateError(errorText));
+            }
+          } else if (phase == 'complete') {
+            if (!completion.isCompleted) {
+              completion.complete();
+            }
+            if (!keepDetachedEvents) {
+              unawaited(subscription.cancel());
+            }
           }
-          if (!mounted) {
-            return latestActionResult;
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (!completion.isCompleted) {
+            completion.completeError(error, stackTrace);
           }
-          setState(() {
-            _error = errorText;
-          });
-          throw StateError(errorText);
-        } else if (phase == 'complete') {
-          break;
-        }
+        },
+      );
+      if (keepDetachedEvents) {
+        _detachedComposeEventSubscriptions.add(subscription);
       }
+      await completion.future;
       _navigateCommands(navigationCommands);
       return latestActionResult;
     } catch (error, stackTrace) {
@@ -369,6 +513,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   }) {
     return <String, Object?>{
       'packageName': widget.plugin.packageName,
+      'theme': pluginThemeSnapshot(_themeScheme!),
       'containerPackageName': widget.plugin.packageName,
       'toolPkgId': widget.plugin.packageName,
       '__operit_ui_package_name': widget.plugin.packageName,
@@ -423,7 +568,25 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
     final route = routeInstanceId.trim().isEmpty
         ? 'default'
         : routeInstanceId.trim();
+    final embeddedScreenPath = _embeddedScreenPath();
+    if (embeddedScreenPath != null) {
+      return 'toolpkg_xml_render:$container:$embeddedScreenPath:$_executionOwnerId';
+    }
     return 'toolpkg_compose_dsl:$container:$module:$route:$_executionOwnerId';
+  }
+
+  /// Returns the explicit screen resource path for an embedded XML renderer.
+  String? _embeddedScreenPath() {
+    final moduleSpec = widget.initialModuleSpec;
+    if (moduleSpec == null) {
+      return null;
+    }
+    final screen = moduleSpec['screen'];
+    if (screen is! String) {
+      return null;
+    }
+    final normalized = screen.trim();
+    return normalized.isEmpty ? null : normalized;
   }
 
   String _currentLanguage() {
@@ -449,13 +612,23 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   }
 
   void _printComposeError(String phase, Object error, StackTrace stackTrace) {
+    final diagnostic = error is CoreLinkError
+        ? error.toDiagnosticString()
+        : error.toString();
     debugPrint(
       'ToolPkg compose_dsl $phase error: '
       'package=${widget.plugin.packageName}, '
       'route=$_selectedRouteId, '
-      'error=$error',
+      'error=$diagnostic',
     );
     debugPrintStack(stackTrace: stackTrace);
+    ClientLogger.e(
+      'event=compose_dispatch_failed phase=$phase '
+      'package=${widget.plugin.packageName} route=$_selectedRouteId',
+      tag: _logTag,
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 
   Map<String, Object?> _moduleSpec(String routeId) {
@@ -520,6 +693,8 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             loading: _loading,
             error: _error,
             renderResult: _renderResult,
+            showLoadingIndicator: widget.showLoadingIndicator,
+            dialogTitle: widget.dialogTitle,
             onAction: _dispatchAction,
             webViewHostContext: webViewHostContext,
             splitMarkdownContent: (content) => widget
@@ -529,7 +704,7 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
           )
         : const _NoUiView();
     if (!widget.showLauncherChrome) {
-      return SizedBox.expand(child: content);
+      return content;
     }
     return Scaffold(
       appBar: AppBar(title: Text(toolPkgContainerDisplayName(widget.plugin))),
@@ -538,6 +713,9 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
   }
 
   bool _hasSelectedUi() {
+    if (_embeddedScreenPath() != null) {
+      return true;
+    }
     for (final route in widget.plugin.uiRoutes) {
       if (route.routeId == _selectedRouteId || route.id == _selectedRouteId) {
         return true;

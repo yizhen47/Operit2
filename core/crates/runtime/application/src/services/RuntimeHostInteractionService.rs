@@ -13,14 +13,11 @@ use operit_host_api::TimeUtils::tryCurrentTimeMillisU128;
 use operit_host_api::{
     SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
 };
+use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_util::stream::Stream::{CollectFuture, Stream};
 use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::MediaPoolManager::MediaPoolManager;
 use tokio::sync::{oneshot, Notify};
-
-tokio::task_local! {
-    static RUNTIME_HOST_INTERACTION_ORIGIN: RuntimeHostInteractionRequestOrigin;
-}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Host-side interaction category requested by runtime services.
@@ -59,8 +56,6 @@ pub enum RuntimeHostInteractionKind {
     TtsPlayback,
     #[serde(rename = "local_inference")]
     LocalInference,
-    #[serde(rename = "tool_permission")]
-    ToolPermission,
     #[serde(rename = "web_access_pairing")]
     WebAccessPairing,
     #[serde(rename = "app_notification")]
@@ -89,22 +84,13 @@ pub struct RuntimeHostInteractionRequest {
     pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisPayload>,
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackPayload>,
     pub localInference: Option<RuntimeHostInteractionLocalInferencePayload>,
-    pub toolPermission: Option<RuntimeHostInteractionToolPermissionPayload>,
     pub webAccessPairing: Option<RuntimeHostInteractionWebAccessPairingPayload>,
     pub appNotification: Option<RuntimeHostInteractionAppNotificationPayload>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-/// Logical origin used to route controller-specific runtime host interactions.
-pub enum RuntimeHostInteractionRequestOrigin {
-    LocalOwner,
-    RemoteSession { sessionId: String, deviceId: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 enum RuntimeHostInteractionTarget {
     OwnerHost,
-    Controller(RuntimeHostInteractionRequestOrigin),
 }
 
 #[derive(Clone, Debug)]
@@ -225,12 +211,6 @@ impl RuntimeHostInteractionRequest {
         request
     }
 
-    fn toolPermission(payload: RuntimeHostInteractionToolPermissionPayload) -> Self {
-        let mut request = Self::empty(RuntimeHostInteractionKind::ToolPermission);
-        request.toolPermission = Some(payload);
-        request
-    }
-
     /// Builds a non-blocking notification for one browser Web Access pairing request.
     fn webAccessPairing(payload: RuntimeHostInteractionWebAccessPairingPayload) -> Self {
         let mut request = Self::empty(RuntimeHostInteractionKind::WebAccessPairing);
@@ -266,7 +246,6 @@ impl RuntimeHostInteractionRequest {
             ttsSynthesis: None,
             ttsPlayback: None,
             localInference: None,
-            toolPermission: None,
             webAccessPairing: None,
             appNotification: None,
         }
@@ -434,25 +413,28 @@ pub struct RuntimeHostInteractionLocalInferencePayload {
     pub requestJson: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Tool parameter included in a host permission request.
 pub struct RuntimeHostInteractionToolPermissionToolParameter {
     pub name: String,
     pub value: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 /// Tool identity and arguments included in a host permission request.
 pub struct RuntimeHostInteractionToolPermissionTool {
     pub name: String,
     pub parameters: Vec<RuntimeHostInteractionToolPermissionToolParameter>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-/// Tool permission request payload routed to the controlling runtime.
-pub struct RuntimeHostInteractionToolPermissionPayload {
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Chat-scoped tool permission request exposed through chat state.
+pub struct RuntimeHostInteractionToolPermissionRequest {
+    pub requestId: String,
+    pub chatId: String,
     pub tool: RuntimeHostInteractionToolPermissionTool,
     pub description: String,
+    pub requestedAtMillis: i64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -476,7 +458,6 @@ pub struct RuntimeHostInteractionResponse {
     pub ttsSynthesis: Option<RuntimeHostInteractionTtsSynthesisResponse>,
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackResponse>,
     pub localInference: Option<RuntimeHostInteractionLocalInferenceResponse>,
-    pub toolPermission: Option<RuntimeHostInteractionToolPermissionResponse>,
 }
 
 impl RuntimeHostInteractionResponse {
@@ -605,13 +586,6 @@ impl RuntimeHostInteractionResponse {
         value
     }
 
-    /// Builds a tool permission response envelope.
-    pub fn toolPermission(response: RuntimeHostInteractionToolPermissionResponse) -> Self {
-        let mut value = Self::empty();
-        value.toolPermission = Some(response);
-        value
-    }
-
     fn empty() -> Self {
         Self {
             error: None,
@@ -632,7 +606,6 @@ impl RuntimeHostInteractionResponse {
             ttsSynthesis: None,
             ttsPlayback: None,
             localInference: None,
-            toolPermission: None,
         }
     }
 }
@@ -760,12 +733,6 @@ pub struct RuntimeHostInteractionLocalInferenceResponse {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-/// Tool permission response payload.
-pub struct RuntimeHostInteractionToolPermissionResponse {
-    pub result: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 /// Browser identity and code for one Web Access pairing request.
 pub struct RuntimeHostInteractionWebAccessPairingPayload {
     pub pairingId: String,
@@ -793,7 +760,6 @@ struct RuntimeHostInteractionState {
     nextSequence: u64,
 }
 
-#[derive(Debug)]
 struct RuntimeHostInteractionBroker {
     state: Mutex<RuntimeHostInteractionState>,
     changed: Condvar,
@@ -811,6 +777,161 @@ impl Default for RuntimeHostInteractionBroker {
 }
 
 static RUNTIME_HOST_INTERACTIONS: OnceLock<RuntimeHostInteractionBroker> = OnceLock::new();
+
+#[derive(Default)]
+struct ChatToolPermissionState {
+    pending: BTreeMap<String, RuntimeHostInteractionToolPermissionRequest>,
+    decisions: BTreeMap<String, String>,
+}
+
+struct ChatToolPermissionBroker {
+    state: Mutex<ChatToolPermissionState>,
+    changed: Notify,
+    requests: MutableStateFlow<Vec<RuntimeHostInteractionToolPermissionRequest>>,
+}
+
+impl Default for ChatToolPermissionBroker {
+    fn default() -> Self {
+        Self {
+            state: Mutex::new(ChatToolPermissionState::default()),
+            changed: Notify::new(),
+            requests: mutableStateFlow(Vec::new()),
+        }
+    }
+}
+
+static CHAT_TOOL_PERMISSIONS: OnceLock<ChatToolPermissionBroker> = OnceLock::new();
+
+/// Returns the process-wide chat tool permission broker.
+fn chatToolPermissionBroker() -> &'static ChatToolPermissionBroker {
+    CHAT_TOOL_PERMISSIONS.get_or_init(ChatToolPermissionBroker::default)
+}
+
+impl ChatToolPermissionBroker {
+    /// Publishes all unresolved requests to subscribed chat state flows.
+    fn refreshRequests(&self, state: &ChatToolPermissionState) {
+        let mut requests = state
+            .pending
+            .iter()
+            .filter(|(requestId, _)| !state.decisions.contains_key(*requestId))
+            .map(|(_, request)| request.clone())
+            .collect::<Vec<_>>();
+        requests.sort_by(|left, right| {
+            left.requestedAtMillis
+                .cmp(&right.requestedAtMillis)
+                .then_with(|| left.requestId.cmp(&right.requestId))
+        });
+        self.requests.set_value(requests);
+    }
+
+    /// Adds one chat-bound request and awaits its decision or deadline.
+    async fn request(
+        &self,
+        chatId: String,
+        tool: RuntimeHostInteractionToolPermissionTool,
+        description: String,
+        timeout: Duration,
+    ) -> Result<String, String> {
+        let timeoutMillis = u64::try_from(timeout.as_millis())
+            .map_err(|_| "tool permission timeout exceeds u64 milliseconds")?;
+        let requestId = Uuid::new_v4().to_string();
+        let requestedAtMillis = i64::try_from(tryCurrentTimeMillisU128()?)
+            .map_err(|_| "tool permission timestamp exceeds i64 milliseconds")?;
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|error| format!("tool permission mutex poisoned: {error}"))?;
+            state.pending.insert(
+                requestId.clone(),
+                RuntimeHostInteractionToolPermissionRequest {
+                    requestId: requestId.clone(),
+                    chatId,
+                    tool,
+                    description,
+                    requestedAtMillis,
+                },
+            );
+            self.refreshRequests(&state);
+        }
+        self.changed.notify_waiters();
+
+        let (timeoutSender, mut timeoutReceiver) = oneshot::channel();
+        if let Err(error) = defaultHostRuntimeTaskSchedulerHost()
+            .scheduleDelayedHostRuntimeTask(
+                "chat-tool-permission-timeout",
+                timeoutMillis,
+                Box::new(move || {
+                    let _ = timeoutSender.send(());
+                }),
+            )
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|lockError| format!("tool permission mutex poisoned: {lockError}"))?;
+            state.pending.remove(&requestId);
+            self.refreshRequests(&state);
+            self.changed.notify_waiters();
+            return Err(error.message);
+        }
+
+        loop {
+            let changed = self.changed.notified();
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|error| format!("tool permission mutex poisoned: {error}"))?;
+                if let Some(result) = state.decisions.remove(&requestId) {
+                    state.pending.remove(&requestId);
+                    self.refreshRequests(&state);
+                    return Ok(result);
+                }
+            }
+            tokio::select! {
+                _ = changed => {}
+                timeout = &mut timeoutReceiver => {
+                    timeout.map_err(|_| "tool permission timeout task was cancelled".to_string())?;
+                    let mut state = self
+                        .state
+                        .lock()
+                        .map_err(|error| format!("tool permission mutex poisoned: {error}"))?;
+                    if let Some(result) = state.decisions.remove(&requestId) {
+                        state.pending.remove(&requestId);
+                        self.refreshRequests(&state);
+                        return Ok(result);
+                    }
+                    state.pending.remove(&requestId);
+                    self.refreshRequests(&state);
+                    return Err(format!("chat tool permission timed out: {requestId}"));
+                }
+            }
+        }
+    }
+
+    /// Applies a decision only when the request belongs to the addressed chat.
+    fn respond(&self, chatId: &str, requestId: &str, result: String) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|error| format!("tool permission mutex poisoned: {error}"))?;
+        let Some(request) = state.pending.get(requestId) else {
+            return Err(format!(
+                "chat tool permission request not found: {requestId}"
+            ));
+        };
+        if request.chatId != chatId {
+            return Err(format!(
+                "chat does not own tool permission request: {requestId}"
+            ));
+        }
+        state.decisions.insert(requestId.to_string(), result);
+        self.refreshRequests(&state);
+        self.changed.notify_waiters();
+        Ok(())
+    }
+}
 
 /// Service facade for publishing and responding to host interaction requests.
 pub struct RuntimeHostInteractionService {
@@ -831,7 +952,6 @@ pub struct RuntimeMediaPoolData {
 /// Blocking stream of pending host interaction requests for selected kinds.
 pub struct RuntimeHostInteractionEventStream {
     kinds: Vec<RuntimeHostInteractionKind>,
-    controllerOrigin: RuntimeHostInteractionRequestOrigin,
 }
 
 impl Stream for RuntimeHostInteractionEventStream {
@@ -970,10 +1090,7 @@ impl RuntimeHostInteractionService {
         &self,
         kinds: Vec<RuntimeHostInteractionKind>,
     ) -> RuntimeHostInteractionEventStream {
-        RuntimeHostInteractionEventStream {
-            kinds,
-            controllerOrigin: currentRuntimeHostInteractionOrigin(),
-        }
+        RuntimeHostInteractionEventStream { kinds }
     }
 }
 
@@ -1230,21 +1347,40 @@ pub fn requestOwnerLocalInference(
         .ok_or_else(|| "local inference response payload is missing".to_string())
 }
 
-/// Requests a tool permission decision without blocking the active runtime task.
-pub async fn requestOwnerToolPermissionAsync(
-    payload: RuntimeHostInteractionToolPermissionPayload,
+/// Returns the permission requests currently pending for one chat.
+pub fn chatToolPermissionRequestsFlow(
+    chatId: String,
+) -> StateFlow<Vec<RuntimeHostInteractionToolPermissionRequest>> {
+    chatToolPermissionBroker()
+        .requests
+        .asStateFlow()
+        .map(move |requests| {
+            requests
+                .into_iter()
+                .filter(|request| request.chatId == chatId)
+                .collect()
+        })
+}
+
+/// Responds to a permission request through its owning chat scope.
+pub fn respondChatToolPermission(
+    chatId: String,
+    requestId: String,
+    result: String,
+) -> Result<(), String> {
+    chatToolPermissionBroker().respond(&chatId, &requestId, result)
+}
+
+/// Publishes a permission request into its chat state and awaits the chat decision.
+pub async fn requestChatToolPermissionAsync(
+    chatId: String,
+    tool: RuntimeHostInteractionToolPermissionTool,
+    description: String,
     timeout: Duration,
-) -> Result<RuntimeHostInteractionToolPermissionResponse, String> {
-    let response = runtimeHostInteractionBroker()
-        .requestAsync(
-            RuntimeHostInteractionTarget::Controller(currentRuntimeHostInteractionOrigin()),
-            RuntimeHostInteractionRequest::toolPermission(payload),
-            timeout,
-        )
-        .await?;
-    response
-        .toolPermission
-        .ok_or_else(|| "tool permission response payload is missing".to_string())
+) -> Result<String, String> {
+    chatToolPermissionBroker()
+        .request(chatId, tool, description, timeout)
+        .await
 }
 
 /// Publishes one browser Web Access pairing request to the owner host.
@@ -1263,24 +1399,6 @@ pub fn publishOwnerAppNotification(payload: RuntimeHostInteractionAppNotificatio
     );
 }
 
-/// Runs a future with a task-local host interaction origin.
-pub async fn withRuntimeHostInteractionOrigin<F, T>(
-    origin: RuntimeHostInteractionRequestOrigin,
-    future: F,
-) -> T
-where
-    F: Future<Output = T>,
-{
-    RUNTIME_HOST_INTERACTION_ORIGIN.scope(origin, future).await
-}
-
-fn currentRuntimeHostInteractionOrigin() -> RuntimeHostInteractionRequestOrigin {
-    match RUNTIME_HOST_INTERACTION_ORIGIN.try_with(Clone::clone) {
-        Ok(origin) => origin,
-        Err(_) => RuntimeHostInteractionRequestOrigin::LocalOwner,
-    }
-}
-
 fn runtimeHostInteractionBroker() -> &'static RuntimeHostInteractionBroker {
     RUNTIME_HOST_INTERACTIONS.get_or_init(RuntimeHostInteractionBroker::default)
 }
@@ -1290,13 +1408,7 @@ impl RuntimeHostInteractionEventStream {
         if !self.kinds.iter().any(|kind| kind == &pending.request.kind) {
             return false;
         }
-        match pending.request.kind {
-            RuntimeHostInteractionKind::ToolPermission => {
-                pending.target
-                    == RuntimeHostInteractionTarget::Controller(self.controllerOrigin.clone())
-            }
-            _ => pending.target == RuntimeHostInteractionTarget::OwnerHost,
-        }
+        pending.target == RuntimeHostInteractionTarget::OwnerHost
     }
 }
 
@@ -1314,8 +1426,8 @@ impl RuntimeHostInteractionBroker {
         request: RuntimeHostInteractionRequest,
         timeout: Duration,
     ) -> Result<RuntimeHostInteractionResponse, String> {
-        let requestId = request.requestId.clone();
         let startedAt = tryCurrentTimeMillisU128()?;
+        let requestId = request.requestId.clone();
         let mut state = self
             .state
             .lock()
@@ -1427,14 +1539,14 @@ impl RuntimeHostInteractionBroker {
                         .map_err(|error| format!("host interaction mutex poisoned: {error}"))?;
                     if let Some(response) = state.responses.remove(&requestId) {
                         state.pending.remove(&requestId);
-                        self.notifyChanged();
+                                        self.notifyChanged();
                         if let Some(error) = response.error.as_ref() {
                             return Err(error.clone());
                         }
                         return Ok(response);
                     }
                     state.pending.remove(&requestId);
-                    self.notifyChanged();
+                                self.notifyChanged();
                     return Err(format!("host interaction timed out: {requestId}"));
                 }
             }

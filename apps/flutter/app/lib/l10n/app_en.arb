@@ -618,6 +618,32 @@
   "settingsModelApiEndpoint": "API endpoint",
   "settingsModelModelNames": "Model names",
   "settingsModelApiKey": "API key",
+  "settingsModelCodexLogin": "ChatGPT login",
+  "settingsModelCodexLoginTitle": "Sign in to ChatGPT Codex",
+  "settingsModelCodexLoginDescription": "OpenAI Codex uses a ChatGPT subscription sign-in instead of an API key.",
+  "settingsModelCodexSignedIn": "Signed in as {account}",
+  "@settingsModelCodexSignedIn": {
+    "placeholders": {
+      "account": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCodexSignedOut": "Not signed in to ChatGPT",
+  "settingsModelCodexBrowser": "Browser sign-in",
+  "settingsModelCodexDevice": "Device code",
+  "settingsModelCodexWaiting": "Waiting for ChatGPT authorization…",
+  "settingsModelCodexDeviceInstructions": "Enter this code on the opened page, then return to Operit.",
+  "settingsModelCodexOpenPage": "Open verification page",
+  "settingsModelCodexLogout": "Sign out",
+  "settingsModelCodexLoginFailed": "ChatGPT sign-in failed: {error}",
+  "@settingsModelCodexLoginFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "settingsModelApiKeyPool": "API key pool",
   "settingsModelApiKeyPoolDescription": "Prepare multiple keys for one model profile so runtime can rotate between them.",
   "settingsModelApiKeyPoolCount": "{count} keys",
@@ -1838,8 +1864,16 @@
   "settingsRuntimeControlCapabilityStorageProvide": "Provide storage",
   "settingsRuntimeControlCapabilityRuntimeExecute": "Run tasks",
   "settingsRuntimeControlCapabilityNetworkUser": "Use the network",
+  "settingsRuntimeControlCapabilityChatRead": "Read chat history",
   "settingsRuntimeControlCapabilityViewDevices": "View devices and current identities",
   "settingsRuntimeControlCapabilityApproval": "Approve authorizations",
+  "chatRoutePermissionDenied": "Permission denied: target device {targetNodeId} lacks the {capability} capability.",
+  "@chatRoutePermissionDenied": {
+    "placeholders": {
+      "targetNodeId": {},
+      "capability": {}
+    }
+  },
   "settingsRuntimeControlRoleAdministrator": "Administrator",
   "settingsRuntimeControlRoleAuditor": "Auditor",
   "settingsRuntimeControlRoleRelay": "Relay node",

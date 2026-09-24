@@ -54,6 +54,7 @@ pub(super) fn render_message_lines_folded(
         return FoldedLines {
             lines: render_blue_cat_lines(content_width, text),
             hits: Vec::new(),
+            xml: Vec::new(),
         };
     }
 
@@ -625,6 +626,7 @@ fn wrap_folded_lines(block: FoldedLines, width: usize) -> FoldedLines {
     let width = width.max(1);
     let mut wrapped_lines = Vec::new();
     let mut wrapped_hits = Vec::new();
+    let mut boundaries = vec![0];
     let mut hits_by_line: HashMap<usize, Vec<super::fold::FoldTarget>> = HashMap::new();
     for hit in block.hits {
         hits_by_line
@@ -636,6 +638,7 @@ fn wrap_folded_lines(block: FoldedLines, width: usize) -> FoldedLines {
         let start = wrapped_lines.len();
         wrapped_lines.extend(wrap_message_lines(vec![line], width));
         let end = wrapped_lines.len();
+        boundaries.push(end);
         if let Some(targets) = hits_by_line.remove(&index) {
             for target in targets {
                 for line_index in start..end {
@@ -648,6 +651,14 @@ fn wrap_folded_lines(block: FoldedLines, width: usize) -> FoldedLines {
         }
     }
     FoldedLines {
+        xml: block
+            .xml
+            .into_iter()
+            .map(|mut slot| {
+                slot.lines = boundaries[slot.lines.start]..boundaries[slot.lines.end];
+                slot
+            })
+            .collect(),
         lines: wrapped_lines,
         hits: wrapped_hits,
     }

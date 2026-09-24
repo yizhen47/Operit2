@@ -17,6 +17,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             marketOrigin: null,
             toolboxUiModules: [],
             uiRoutes: [],
+            chatComposerSlots: [],
             navigationEntries: [],
             desktopWidgets: [],
             appLifecycleHooks: [],
@@ -38,7 +39,9 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             promptFinalizeHooks: [],
             promptEstimateFinalizeHooks: [],
             summaryGenerateHooks: [],
-            aiProviders: []
+            coreCommands: [],
+            aiProviders: [],
+            manifestExtensions: []
         };
         root.__operitToolPkgRegistrationCapture = capture;
 
@@ -397,6 +400,43 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return Promise.reject(new Error('resource not found: ' + resourceKey));
         }
 
+        function readToolPkgResourceFromPackage(packageNameOrSubpackageId, key, outputFileName, internal) {
+            if (registrationOnly) {
+                throw new Error('ToolPkg.readResourceFromPackage is unavailable during ToolPkg registration');
+            }
+            var target = String(packageNameOrSubpackageId || '').trim();
+            var resourceKey = String(key || '').trim();
+            if (!target) {
+                return Promise.reject(new Error('ToolPkg resource target is required'));
+            }
+            if (!resourceKey) {
+                return Promise.reject(new Error('resource key is required'));
+            }
+            if (
+                typeof NativeInterface === 'undefined' ||
+                !NativeInterface ||
+                typeof NativeInterface.readToolPkgResource !== 'function'
+            ) {
+                return Promise.reject(new Error('NativeInterface.readToolPkgResource is unavailable'));
+            }
+            var raw = NativeInterface.readToolPkgResource(
+                target,
+                resourceKey,
+                outputFileName == null ? '' : String(outputFileName).trim(),
+                internal === true ? 'true' : ''
+            );
+            if (typeof raw !== 'string' || !raw.trim()) {
+                return Promise.reject(new Error('resource not found: ' + target + '/' + resourceKey));
+            }
+            try {
+                var parsed = JSON.parse(raw);
+                if (parsed && parsed.success === false) {
+                    return Promise.reject(new Error(String(parsed.message || 'resource read failed')));
+                }
+            } catch (_error) {}
+            return Promise.resolve(raw);
+        }
+
         function getToolPkgConfigDir(pluginId) {
             var explicitId = String(pluginId || '').trim();
             var target = explicitId || resolveCurrentToolPkgTarget();
@@ -544,6 +584,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             _m: captureMarketOrigin,
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'registerToolPkgToolboxUiModule'),
             registerUiRoute: registerScreen('uiRoutes', 'registerToolPkgUiRoute'),
+            registerChatComposerSlot: registerScreen('chatComposerSlots', 'registerToolPkgChatComposerSlot'),
             /// Encodes navigation callbacks using the nested runtime action contract.
             registerNavigationEntry: function(definition) {
                 var normalized = copyObject(definition, '');
@@ -590,18 +631,22 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerPromptFinalizeHook: registerFunction('promptFinalizeHooks', 'registerPromptFinalizeHook'),
             registerPromptEstimateFinalizeHook: registerFunction('promptEstimateFinalizeHooks', 'registerPromptEstimateFinalizeHook'),
             registerSummaryGenerateHook: registerFunction('summaryGenerateHooks', 'registerSummaryGenerateHook'),
+            registerCoreCommand: registerFunction('coreCommands', 'registerCoreCommand'),
             readResource: readToolPkgResource,
+            readResourceFromPackage: readToolPkgResourceFromPackage,
             getConfigDir: getToolPkgConfigDir,
             wasm: {
                 call: callToolPkgWasm
             },
             registerAiProvider: function(definition) {
                 capture.aiProviders.push(normalizeSpec(normalizeAiProviderDefinition(definition, 'registerAiProvider')));
-            }
+            },
+            registerManifestExtension: registerFunction('manifestExtensions', 'registerManifestExtension')
         });
 
         root.registerToolPkgToolboxUiModule = api.registerToolboxUiModule;
         root.registerToolPkgUiRoute = api.registerUiRoute;
+        root.registerToolPkgChatComposerSlot = api.registerChatComposerSlot;
         root.registerToolPkgNavigationEntry = api.registerNavigationEntry;
         root.registerToolPkgDesktopWidget = api.registerDesktopWidget;
         root.registerToolPkgAppLifecycleHook = api.registerAppLifecycleHook;
@@ -623,7 +668,9 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         root.registerToolPkgPromptFinalizeHook = api.registerPromptFinalizeHook;
         root.registerToolPkgPromptEstimateFinalizeHook = api.registerPromptEstimateFinalizeHook;
         root.registerToolPkgSummaryGenerateHook = api.registerSummaryGenerateHook;
+        root.registerToolPkgCoreCommand = api.registerCoreCommand;
         root.registerToolPkgAiProvider = api.registerAiProvider;
+        root.registerToolPkgManifestExtension = api.registerManifestExtension;
 
         root.registerAppLifecycleHook = api.registerAppLifecycleHook;
         root.registerMessageProcessingPlugin = api.registerMessageProcessingPlugin;
@@ -644,6 +691,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         root.registerPromptFinalizeHook = api.registerPromptFinalizeHook;
         root.registerPromptEstimateFinalizeHook = api.registerPromptEstimateFinalizeHook;
         root.registerSummaryGenerateHook = api.registerSummaryGenerateHook;
+        root.registerCoreCommand = api.registerCoreCommand;
 
         installGlobal('ToolPkg', api);
     })();
@@ -689,6 +737,64 @@ mod tests {
                 .expect("runtime capture should be readable");
 
             assert_eq!(capturedOrigin, "null");
+        });
+    }
+
+    /// Verifies Core command registrations retain their metadata and durable callback reference.
+    #[test]
+    fn captures_core_command_registration() {
+        let runtime = Runtime::new().expect("QuickJS runtime should start");
+        let context = Context::full(&runtime).expect("QuickJS context should start");
+
+        context.with(|context| {
+            context
+                .eval::<(), _>(
+                    r#"
+                    globalThis.__operitExpose = function(name, value) {
+                        globalThis[name] = value;
+                    };
+                    "#,
+                )
+                .expect("runtime expose should evaluate");
+            context
+                .eval::<(), _>(buildToolPkgApiRuntimeScript())
+                .expect("toolpkg api runtime should evaluate");
+            context
+                .eval::<(), _>(buildToolPkgRegistrationBridgeScript(false))
+                .expect("runtime bridge should evaluate");
+            context
+                .eval::<(), _>(
+                    r#"
+                    function runHello(event) {
+                        return { stdout: event.eventPayload.commandName };
+                    }
+                    globalThis.__operitGetActiveModuleExports = function() {
+                        return { runHello: runHello };
+                    };
+                    ToolPkg.registerCoreCommand({
+                        id: 'hello_command',
+                        name: 'hello',
+                        title: { en: 'Hello' },
+                        description: { en: 'Greets the user' },
+                        usage: '/hello <name>',
+                        function: runHello
+                    });
+                    "#,
+                )
+                .expect("Core command registration should evaluate");
+            let command_name = context
+                .eval::<String, _>(
+                    "JSON.parse(globalThis.__operitToolPkgRegistrationCapture.coreCommands[0]).name",
+                )
+                .expect("captured command should be readable");
+            let function_name = context
+                .eval::<String, _>(
+                    "JSON.parse(globalThis.__operitToolPkgRegistrationCapture.coreCommands[0]).function",
+                )
+                .expect("captured function should be readable");
+
+            assert_eq!(command_name, "hello");
+            assert_eq!(function_name, "runHello");
         });
     }
 }

@@ -6,13 +6,14 @@ use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use crate::plugins::toolpkg::ToolPkgInputMenuToggleBridge::ToolPkgInputMenuToggleBridge;
+use crate::plugins::toolpkg::ToolPkgChatComposerSlotBridge::ToolPkgChatComposerSlotBridge;
 use crate::plugins::PluginRegistry::PluginRegistry;
 use crate::services::ProviderRuntimeSupportService::ProviderRuntimeSupportService;
 use crate::services::ToolRuntimeSupportService::ToolRuntimeSupportService;
 #[cfg(feature = "javascript")]
 use operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost;
 use operit_host_api::HostManager::{
-    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, setDefaultWebSocketHost,
+    setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost, setDefaultWebSocketHost, setDefaultSerialPortHost,
     HostManager,
 };
 use operit_host_api::TimeUtils::currentTimeMillis;
@@ -126,6 +127,9 @@ impl OperitApplication {
         }
         if let Some(webSocketHost) = hostManager.webSocketHost.clone() {
             setDefaultWebSocketHost(webSocketHost);
+        }
+        if let Some(serialPortHost) = hostManager.serialPortHost.clone() {
+            setDefaultSerialPortHost(serialPortHost);
         }
         if let Some(taskSchedulerHost) = hostManager.hostRuntimeTaskSchedulerHost.clone() {
             setDefaultHostRuntimeTaskSchedulerHost(taskSchedulerHost);
@@ -368,7 +372,7 @@ impl OperitApplication {
             .clone()
             .expect("runtime task scheduler host must be configured for plugin startup");
         let startup = move || {
-            showPluginLoading();
+            let loadingGeneration = showPluginLoading();
             packageManager
                 .lock()
                 .expect("package manager mutex poisoned")
@@ -378,7 +382,7 @@ impl OperitApplication {
                 .getMcpStartupTimeoutSeconds()
                 .expect("api preferences must provide mcp startup timeout seconds");
             let _ = starter.startAllDeployedPluginsWithTimeout(timeoutSeconds);
-            completePluginLoadingSession();
+            completePluginLoadingSession(loadingGeneration);
         };
         taskScheduler
             .scheduleHostRuntimeTask("operit-plugin-startup", Box::new(startup))
@@ -426,6 +430,12 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn inputMenuToggleBridge(&self) -> ToolPkgInputMenuToggleBridge {
         ToolPkgInputMenuToggleBridge::new(self.toolPkgBridgeRuntime.clone())
+    }
+
+    /// Creates a host-composed chat composer slot bridge.
+    #[allow(non_snake_case)]
+    pub fn chatComposerSlotBridge(&self) -> ToolPkgChatComposerSlotBridge {
+        ToolPkgChatComposerSlotBridge::new(self.toolPkgBridgeRuntime.clone())
     }
 
     /// Returns the shared package manager owned by the initialized tool handler.

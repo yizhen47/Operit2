@@ -490,12 +490,33 @@ async fn core_state_flow_from_stream_with_decoder<T>(
 where
     T: Clone + PartialEq + Send + 'static,
 {
-    let first = stream.recv().await.ok_or_else(|| {
-        CoreLinkError::new(
-            "WATCH_STREAM_EMPTY",
-            "Core watch stream completed before its snapshot",
-        )
-    })?;
+    AppLogger::i("CoreRouteStream", "state_flow.wait_snapshot");
+    let first = match stream.recv().await {
+        Some(first) => first,
+        None => {
+            AppLogger::e("CoreRouteStream", "state_flow.closed_before_snapshot");
+            return Err(CoreLinkError::new(
+                "WATCH_STREAM_EMPTY",
+                "Core watch stream completed before its snapshot",
+            ));
+        }
+    };
+    AppLogger::i(
+        "CoreRouteStream",
+        &format!(
+            "state_flow.initial_event requestId={} targetObjectId={} property={} kind={:?} value={} summary={}",
+            first
+                .requestId
+                .as_ref()
+                .map(|requestId| requestId.0.as_str())
+                .unwrap_or("<none>"),
+            first.targetObjectId,
+            first.propertyName,
+            first.kind,
+            core_value_shape(&first.value),
+            core_value_trace_summary(&first.value)
+        ),
+    );
     AppLogger::d(
         "CoreRouteStream",
         &format!(
@@ -513,12 +534,14 @@ where
         ),
     );
     if first.kind == CoreEventKind::Completed {
+        AppLogger::e("CoreRouteStream", "state_flow.completed_before_snapshot");
         return Err(CoreLinkError::new(
             "WATCH_STREAM_COMPLETED",
             "Core watch stream completed before its snapshot",
         ));
     }
     if first.kind == CoreEventKind::Delta {
+        AppLogger::e("CoreRouteStream", "state_flow.delta_before_snapshot");
         return Err(CoreLinkError::new(
             "WATCH_STREAM_DELTA_FIRST",
             "Core watch stream delivered a delta before its snapshot",
@@ -607,7 +630,36 @@ where
             request.requestId.0, method_name
         ),
     );
-    let stream = runtime.watch(request).await?;
+    let requestId = request.requestId.0.clone();
+    let stream = match runtime.watch(request).await {
+        Ok(stream) => {
+            AppLogger::i(
+                "CoreRouteStream",
+                &format!(
+                    "wrapper.watch.stream_opened requestId={} method={}",
+                    requestId, method_name
+                ),
+            );
+            AppLogger::i(
+                "CoreRouteStream",
+                &format!(
+                    "wrapper.watch.wait_snapshot requestId={} method={}",
+                    requestId, method_name
+                ),
+            );
+            stream
+        }
+        Err(error) => {
+            AppLogger::e(
+                "CoreRouteStream",
+                &format!(
+                    "wrapper.watch.failed requestId={} method={} error={}",
+                    requestId, method_name, error
+                ),
+            );
+            return Err(error);
+        }
+    };
     core_state_flow_from_stream_with_decoder(stream, decoder).await
 }
 

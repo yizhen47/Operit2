@@ -630,9 +630,13 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
+    /// Builds the main chat surface event using the shared chat runtime identifier.
     fn buildChatViewHookParams(&self, chatId: &str) -> ChatViewHookParams {
-        let histories = self.chatHistoriesFlow.value();
-        let (workspacePath, title) = match histories.iter().find(|chat| chat.id == chatId) {
+        let chat = self
+            .chatHistoryManager
+            .loadChatHistory(chatId.to_string())
+            .expect("ChatHistoryManager.loadChatHistory must succeed");
+        let (workspacePath, title) = match chat.as_ref() {
             Some(chat) => (
                 self.primaryWorkspacePathForChat(chat),
                 Some(chat.title.clone()),
@@ -644,7 +648,7 @@ impl ChatHistoryDelegate {
             chatId: chatId.to_string(),
             workspacePath,
             workspaceEnv: serde_json::json!({}),
-            runtime: "rust".to_string(),
+            runtime: "main".to_string(),
             title,
         }
     }

@@ -488,9 +488,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
 
     expect(
-      find.byKey(const ValueKey<String>('markdown-paragraph-break')),
+      find.byKey(const ValueKey<String>('markdown-paragraph-break-0')),
       findsNothing,
     );
+  });
+
+  /// Verifies that separated Markdown paragraphs do not create duplicate keys.
+  testWidgets('renders multiple Markdown paragraph gaps without key errors', (
+    tester,
+  ) async {
+    final streamController = StreamController<MarkdownStreamEvent>();
+    addTearDown(() async {
+      await streamController.close();
+    });
+
+    await tester.pumpWidget(
+      _streamingStructuredRendererHarness(
+        parts: const <MessagePart>[],
+        contentStream: streamController.stream,
+        streamState: StreamMarkdownRendererState(),
+      ),
+    );
+    streamController
+      ..add(_markdownBlockStart())
+      ..add(_markdownBlockChunk('first paragraph\n\nsecond paragraph\n\nthird paragraph'));
+    await tester.pump(const Duration(milliseconds: 250));
+
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('first paragraph'), findsWidgets);
+    expect(find.textContaining('second paragraph'), findsWidgets);
+    expect(find.textContaining('third paragraph'), findsWidgets);
   });
 
   testWidgets('keeps live output when Flow rebuilds the stream wrapper', (

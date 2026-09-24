@@ -7,6 +7,13 @@ pub enum GeneratedCoreRoute {
     Binding { scope: usize, key: String },
 }
 
+/// Identifies the device whose capability is required by a route.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeneratedRoutePermissionSubject {
+    Caller,
+    Target,
+}
+
 /// Identifies lifecycle hooks registered by annotated Space routes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GeneratedRouteLifecycle {
@@ -22,6 +29,8 @@ pub struct GeneratedSpaceRoute {
     pub methodName: &'static str,
     pub bindingArgument: &'static str,
     pub targetType: &'static str,
+    pub permissionScope: GeneratedRoutePermissionSubject,
+    pub permissionCapability: &'static str,
     pub lifecycle: GeneratedRouteLifecycle,
 }
 

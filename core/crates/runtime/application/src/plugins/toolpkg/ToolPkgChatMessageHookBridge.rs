@@ -128,6 +128,7 @@ fn buildChatMessagePayload(chatId: &str, message: &ChatMessage) -> Value {
         "timestamp": message.timestamp,
         "sender": message.sender,
         "roleName": message.roleName,
+        "content": message.displayText(),
         "parts": message.parts,
         "completedAt": message.completedAt,
         "provider": message.provider,

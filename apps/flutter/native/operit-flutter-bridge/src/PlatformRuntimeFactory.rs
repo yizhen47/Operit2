@@ -33,10 +33,6 @@ impl operit_host_api::SystemOperationHost for FlutterSystemOperationBridge {
         self.native.getSystemLanguageCode()
     }
 
-    fn toast(&self, message: &str) -> operit_host_api::HostResult<()> {
-        self.native.toast(message)
-    }
-
     fn sendNotification(
         &self,
         request: &operit_host_api::SystemNotificationRequest,
@@ -392,6 +388,34 @@ fn serialize_owner_params_json(
     })
 }
 
+/// Presents one toast through the Flutter-owned application surface.
+fn present_flutter_toast(message: &str) -> operit_host_api::HostResult<()> {
+    if message.trim().is_empty() {
+        return Err(operit_host_api::HostError::new("toast message is required"));
+    }
+    let response = requestOwnerSystemOperation(
+        RuntimeHostInteractionSystemOperationPayload {
+            operation: "toast".to_string(),
+            paramsJson: serialize_owner_params_json(
+                &serde_json::json!({ "message": message }),
+                "toast",
+            )?,
+        },
+        Duration::from_secs(60),
+    )
+    .map_err(operit_host_api::HostError::new)?;
+    let result: serde_json::Value =
+        serde_json::from_str(&response.resultJson).map_err(|error| {
+            operit_host_api::HostError::new(format!("toast response JSON decode failed: {error}"))
+        })?;
+    if result.get("success").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err(operit_host_api::HostError::new(
+            "toast response did not confirm presentation",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(any(
     windows,
     all(target_os = "linux", not(target_env = "ohos")),
@@ -595,6 +619,7 @@ pub(crate) fn create_local_core(
             }),
         )));
     }
+    context = context.withToastHost(Arc::new(present_flutter_toast));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -799,6 +824,7 @@ pub(crate) fn create_local_core(
             })
         },
     ))));
+    context = context.withToastHost(Arc::new(present_flutter_toast));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }
@@ -1024,6 +1050,7 @@ pub(crate) fn create_local_core(
             })
         }),
     )));
+    context = context.withToastHost(Arc::new(present_flutter_toast));
     let application = OperitApplication::newWithContext(context);
     Ok(LocalCoreProxy::new(application))
 }

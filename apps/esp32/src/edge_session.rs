@@ -57,7 +57,13 @@ async fn installSpaceRoute(
         return Err("Invalid authenticated Space route context".to_string());
     }
     let peer = EdgePeerLink::new(channel);
-    let client = EdgeSpaceRouteClient::throughAdjacent(peer.clone(), spaceId, adjacentNodeId, ttl);
+    let client = EdgeSpaceRouteClient::throughAdjacent(
+        peer.clone(),
+        spaceId,
+        peerId.to_string(),
+        adjacentNodeId,
+        ttl,
+    );
     operit_link::installCoreRouteRuntime(Arc::new(client.clone()));
     crate::edge_chat::install(client, chatId);
     // Keep the UART session owner alive while PeerLink owns receive(); the

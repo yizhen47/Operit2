@@ -5,11 +5,13 @@ import 'dart:convert';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import 'ToolPkgComposeDslWebViewResourceServer.dart';
 
@@ -20,6 +22,7 @@ const String _composeDslWebViewBridgeChannelName =
     '__ComposeDslWebViewHostBridgeChannel__';
 const String _composeDslWebViewBridgeHtmlMarker =
     'data-operit-webview-bridge-runtime="1"';
+const String _composeDslWebViewLogTag = 'ComposeDslWebView';
 const GeneratedCoreProxyClients _runtimeClients = GeneratedCoreProxyClients(
   ProxyCoreRuntimeBridge(),
 );
@@ -164,6 +167,11 @@ class ComposeDslWebViewHostRegistry {
         (name, methods) => MapEntry(name, Map<String, String>.of(methods)),
       ),
     );
+    ClientLogger.i(
+      'event=controller_bind context=$executionContextKey route=$routeInstanceId '
+      'key=$controllerKey boundKeys=${scopedBindings.keys.join(',')}',
+      tag: _composeDslWebViewLogTag,
+    );
   }
 
   static void unbind({
@@ -178,6 +186,11 @@ class ComposeDslWebViewHostRegistry {
     final current = scopedBindings[controllerKey];
     if (current?.controller == controller) {
       scopedBindings.remove(controllerKey);
+      ClientLogger.i(
+        'event=controller_unbind context=$executionContextKey key=$controllerKey '
+        'remainingKeys=${scopedBindings.keys.join(',')}',
+        tag: _composeDslWebViewLogTag,
+      );
     }
     if (scopedBindings.isEmpty) {
       _bindings.remove(executionContextKey);
@@ -190,6 +203,10 @@ class ComposeDslWebViewHostRegistry {
     }
     _bindings.remove(executionContextKey);
     _javascriptInterfaceActionIds.remove(executionContextKey);
+    ClientLogger.i(
+      'event=controller_context_clear context=$executionContextKey',
+      tag: _composeDslWebViewLogTag,
+    );
   }
 
   static void updateState({
@@ -321,29 +338,72 @@ class ComposeDslWebViewHostRegistry {
     if (executionContextKey.isEmpty ||
         controllerKey.isEmpty ||
         command.isEmpty) {
+      ClientLogger.e(
+        'event=controller_command_rejected reason=missing_fields '
+        'context=$executionContextKey key=$controllerKey command=$command',
+        tag: _composeDslWebViewLogTag,
+      );
       return _bridgeError(
         'webview controller command is missing required fields',
       );
     }
     final commandPayload = _stringMap(payload['payload']);
     final binding = _bindings[executionContextKey]?[controllerKey];
+    final commandDetail = command == 'evaluateJavascript'
+        ? 'scriptChars=${_string(commandPayload['script']).length}'
+        : 'payloadKeys=${commandPayload.keys.join(',')}';
+    ClientLogger.d(
+      'event=controller_command_start context=$executionContextKey '
+      'key=$controllerKey command=$command $commandDetail '
+      'bound=${binding != null}',
+      tag: _composeDslWebViewLogTag,
+    );
     if (binding == null) {
-      return switch (command) {
-        'getState' => _bridgeSuccess(null),
-        'addJavascriptInterface' => _registerJavascriptInterfaceCommand(
+      final boundKeys = _bindings[executionContextKey]?.keys.join(',') ?? '';
+      if (command == 'getState') {
+        ClientLogger.d(
+          'event=controller_command_pending_binding '
+          'context=$executionContextKey key=$controllerKey command=$command '
+          'boundKeys=$boundKeys',
+          tag: _composeDslWebViewLogTag,
+        );
+        return _bridgeSuccess(null);
+      }
+      if (command == 'addJavascriptInterface') {
+        ClientLogger.d(
+          'event=controller_command_pending_binding '
+          'context=$executionContextKey key=$controllerKey command=$command '
+          'boundKeys=$boundKeys',
+          tag: _composeDslWebViewLogTag,
+        );
+        return _registerJavascriptInterfaceCommand(
           executionContextKey: executionContextKey,
           controllerKey: controllerKey,
           payload: commandPayload,
-        ),
-        'removeJavascriptInterface' => _unregisterJavascriptInterfaceCommand(
+        );
+      }
+      if (command == 'removeJavascriptInterface') {
+        ClientLogger.d(
+          'event=controller_command_pending_binding '
+          'context=$executionContextKey key=$controllerKey command=$command '
+          'boundKeys=$boundKeys',
+          tag: _composeDslWebViewLogTag,
+        );
+        return _unregisterJavascriptInterfaceCommand(
           executionContextKey: executionContextKey,
           controllerKey: controllerKey,
           payload: commandPayload,
-        ),
-        _ => _bridgeError(
-          "webview controller '$controllerKey' is not bound in route '$executionContextKey'",
-        ),
-      };
+        );
+      }
+      ClientLogger.e(
+        'event=controller_command_missing_binding '
+        'context=$executionContextKey key=$controllerKey command=$command '
+        'boundKeys=$boundKeys',
+        tag: _composeDslWebViewLogTag,
+      );
+      return _bridgeError(
+        "webview controller '$controllerKey' is not bound in route '$executionContextKey'",
+      );
     }
     final controller = binding.controller;
     try {
@@ -385,6 +445,11 @@ class ComposeDslWebViewHostRegistry {
           final script = _string(commandPayload['script']);
           final result = await controller.runJavaScriptReturningResult(script);
           final decoded = _decodePlainJsonValue(result);
+          ClientLogger.d(
+            'event=controller_command_done context=$executionContextKey '
+            'key=$controllerKey command=$command',
+            tag: _composeDslWebViewLogTag,
+          );
           return _bridgeSuccess(decoded);
         case 'getState':
           return _bridgeSuccess(binding.state.toPayload());
@@ -411,6 +476,13 @@ class ComposeDslWebViewHostRegistry {
       }
     } catch (error) {
       final message = error.toString().trim();
+      ClientLogger.e(
+        'event=controller_command_failed context=$executionContextKey '
+        'key=$controllerKey command=$command',
+        tag: _composeDslWebViewLogTag,
+        error: error,
+        stackTrace: StackTrace.current,
+      );
       return _bridgeError(
         message.isEmpty ? 'webview controller command failed' : message,
       );
@@ -481,6 +553,12 @@ class ComposeDslWebView extends StatefulWidget {
 }
 
 class _ComposeDslWebViewState extends State<ComposeDslWebView> {
+  /// Keeps embedded page gestures from being claimed by ancestor navigation.
+  static final Set<Factory<OneSequenceGestureRecognizer>>
+  _pageGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
+    Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
+  };
+
   late final WebViewController _controller;
   late final Widget _webViewWidget;
   late _ComposeDslWebViewRequest _request;
@@ -516,7 +594,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
       )
       ..setBackgroundColor(Colors.transparent)
       ..setNavigationDelegate(_navigationDelegate());
-    _webViewWidget = WebViewWidget(controller: _controller);
+    _webViewWidget = WebViewWidget(
+      controller: _controller,
+      gestureRecognizers: _pageGestureRecognizers,
+    );
     if (_supportsComposeDslPageHooks) {
       _controller
         ..addJavaScriptChannel(
@@ -743,7 +824,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         });
       },
       onProgress: (progress) {
-        _progress = progress.clamp(0, 100);
+        final nextProgress = progress.clamp(0, 100);
+        if (_progress == nextProgress) return;
+        final wasIndicatorVisible = _progress > 0 && _progress < 100;
+        _progress = nextProgress;
         _loading = _progress < 100;
         _updateStateSnapshot();
         _emit(_callbackIds.onProgressChanged, <String, Object?>{
@@ -751,7 +835,8 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
           'url': _currentUrl,
           'title': _title,
         });
-        if (mounted) {
+        final isIndicatorVisible = _progress > 0 && _progress < 100;
+        if (mounted && wasIndicatorVisible != isIndicatorVisible) {
           setState(() {});
         }
       },
@@ -1420,6 +1505,7 @@ Future<void> _refreshComposeDslJavascriptInterfaces(
       if (typeof window.__operitInstallComposeDslJavascriptInterfaces === 'function') {
         window.__operitInstallComposeDslJavascriptInterfaces();
       }
+      window.dispatchEvent(new Event('operitComposeDslInterfacesReady'));
     })();
   ''');
 }

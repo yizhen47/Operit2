@@ -176,6 +176,7 @@ class _MarkdownTextState extends State<_MarkdownText>
     final lines = widget.text.split('\n');
     var index = 0;
     var textBlockIndex = 0;
+    var paragraphBreakIndex = 0;
     var typewriterOffset = 0;
     var pendingParagraphBreak = false;
     final enableTypewriter = _enableTypewriter;
@@ -304,7 +305,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           textKey: '${widget.nodeKey}-text-0',
           text: widget.text,
           color: widget.textColor,
-          reveal: revealSegmentFor(widget.text.length),
+          reveal: revealSegmentFor(widget.text.characters.length),
           children: widget.children,
           isLastNode: widget.isLastNode,
           onLinkClick: widget.onLinkClick,
@@ -331,7 +332,7 @@ class _MarkdownTextState extends State<_MarkdownText>
           textKey: '${widget.nodeKey}-text-${textBlockIndex++}',
           text: paragraphLines.join('\n'),
           color: widget.textColor,
-          reveal: revealSegmentFor(paragraphLines.join('\n').length),
+          reveal: revealSegmentFor(paragraphLines.join('\n').characters.length),
           onLinkClick: widget.onLinkClick,
         ),
       );
@@ -344,8 +345,10 @@ class _MarkdownTextState extends State<_MarkdownText>
         return;
       }
       widgets.add(
-        const SizedBox(
-          key: ValueKey<String>('markdown-paragraph-break'),
+        SizedBox(
+          key: ValueKey<String>(
+            'markdown-paragraph-break-${paragraphBreakIndex++}',
+          ),
           height: _markdownParagraphBreakHeight,
         ),
       );
@@ -876,7 +879,7 @@ TextSpan _revealedTypewriterSpan({
   required bool showCursor,
   required TextStyle? baseStyle,
 }) {
-  final plainTextLength = source.toPlainText().length;
+  final plainTextLength = source.toPlainText().characters.length;
   final state = _InlineRevealState(
     revealLength: revealLength.clamp(0, plainTextLength).toDouble(),
     showCursor: showCursor,
@@ -943,7 +946,9 @@ void _appendRevealedText({
   required _InlineRevealState state,
 }) {
   final segmentStart = state.consumedLength;
-  final segmentEnd = segmentStart + text.length;
+  final textCharacters = text.characters;
+  final textLength = textCharacters.length;
+  final segmentEnd = segmentStart + textLength;
   final revealLength = state.revealLength;
   if (revealLength >= segmentEnd) {
     spans.add(TextSpan(text: text, style: style, recognizer: recognizer));
@@ -959,7 +964,7 @@ void _appendRevealedText({
   }
 
   final visibleLength = (revealLength.floor() - segmentStart)
-      .clamp(0, text.length)
+      .clamp(0, textLength)
       .toInt();
   final partialAmount = (revealLength - revealLength.floor())
       .clamp(0, 1)
@@ -967,17 +972,17 @@ void _appendRevealedText({
   if (visibleLength > 0) {
     spans.add(
       TextSpan(
-        text: text.substring(0, visibleLength),
+        text: textCharacters.take(visibleLength).toString(),
         style: style,
         recognizer: recognizer,
       ),
     );
   }
   var hiddenStart = visibleLength;
-  if (partialAmount > 0 && visibleLength < text.length) {
+  if (partialAmount > 0 && visibleLength < textLength) {
     spans.add(
       TextSpan(
-        text: text.substring(visibleLength, visibleLength + 1),
+        text: textCharacters.skip(visibleLength).take(1).toString(),
         style: _partialTextStyle(style, partialAmount),
       ),
     );
@@ -985,10 +990,10 @@ void _appendRevealedText({
   }
   state.consumedLength = segmentStart + hiddenStart;
   _appendRevealCursor(spans, state);
-  if (hiddenStart < text.length) {
+  if (hiddenStart < textLength) {
     spans.add(
       TextSpan(
-        text: text.substring(hiddenStart),
+        text: textCharacters.skip(hiddenStart).toString(),
         style: _hiddenTextStyle(style),
       ),
     );

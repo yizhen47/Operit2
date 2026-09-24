@@ -195,6 +195,11 @@ impl ModelConfigManager {
                 ApiProviderType::LOCAL_MODEL.name().to_string(),
             ));
         }
+        let endpoint = if providerType == ApiProviderType::OPENAI_CODEX {
+            "https://chatgpt.com/backend-api/codex/responses".to_string()
+        } else {
+            endpoint
+        };
         let providerId = self.createProviderId();
         let provider = ProviderProfile::new(providerId.clone(), name, providerType, endpoint);
         self.modelConfigDataStore.try_edit_result(|preferences| {
@@ -213,7 +218,10 @@ impl ModelConfigManager {
         &self,
         provider: ProviderProfile,
     ) -> Result<ProviderProfile, ModelConfigError> {
-        let provider = Self::providerWithProviderOwnedThinkingRules(provider)?;
+        let mut provider = Self::providerWithProviderOwnedThinkingRules(provider)?;
+        if provider.providerType == ApiProviderType::OPENAI_CODEX {
+            provider.endpoint = "https://chatgpt.com/backend-api/codex/responses".to_string();
+        }
         ThinkingConfigurationApplier::validate(&provider.thinkingConfigurations)
             .map_err(ModelConfigError::InvalidThinkingConfiguration)?;
         self.modelConfigDataStore.try_edit_result(|preferences| {
@@ -302,6 +310,23 @@ impl ModelConfigManager {
                     capabilities: model.capabilitiesOverride.clone(),
                     builtinTools: model.builtinToolsOverride.clone().unwrap_or_default(),
                     request: model.requestOverride.clone(),
+                })
+                .collect());
+        }
+        if provider.providerType == ApiProviderType::OPENAI_CODEX {
+            let providerCatalog = ModelCatalog::provider(&provider.providerTypeId)
+                .map_err(ModelConfigError::ModelListFetch)?;
+            return Ok(providerCatalog
+                .models
+                .iter()
+                .map(|catalogModel| AvailableProviderModel {
+                    modelId: catalogModel.modelId.clone(),
+                    source: AvailableProviderModelSource::Remote,
+                    pricing: catalogModel.pricing.clone(),
+                    context: catalogModel.context.clone(),
+                    capabilities: catalogModel.capabilities.clone(),
+                    builtinTools: catalogModel.builtinTools.clone(),
+                    request: catalogModel.request.clone(),
                 })
                 .collect());
         }

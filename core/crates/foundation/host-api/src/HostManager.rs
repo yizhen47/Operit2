@@ -7,10 +7,23 @@ use crate::{
     HostRuntimeEventSchedulerHost, HostRuntimeTaskSchedulerHost, HostSecretStore, HttpHost,
     LocalInferenceHost, ManagedRuntimeHost, PluginSdkIpc::PluginSdkIpcHost, RobotFaceHost,
     RuntimeSqliteHost, RuntimeStorageHost, RuntimeStorageWriteHost, SystemOperationHost,
-    TerminalHost, TtsPlaybackHost, TtsSynthesisHost, WebSocketHost, WebVisitHost,
+    TerminalHost, ToastHost, TtsPlaybackHost, TtsSynthesisHost, WebSocketHost, WebVisitHost,
+    SerialPortHost,
 };
 
 static DEFAULT_HTTP_HOST: OnceLock<Arc<dyn HttpHost>> = OnceLock::new();
+static DEFAULT_SERIAL_PORT_HOST: OnceLock<Arc<dyn SerialPortHost>> = OnceLock::new();
+
+#[allow(non_snake_case)]
+pub fn setDefaultSerialPortHost(host: Arc<dyn SerialPortHost>) {
+    let _ = DEFAULT_SERIAL_PORT_HOST.set(host);
+}
+
+#[allow(non_snake_case)]
+pub fn defaultSerialPortHost() -> crate::HostResult<Arc<dyn SerialPortHost>> {
+    DEFAULT_SERIAL_PORT_HOST.get().cloned()
+        .ok_or_else(|| crate::HostError::new("The active Host has not registered a serial port provider"))
+}
 static DEFAULT_WEBSOCKET_HOST: OnceLock<Arc<dyn WebSocketHost>> = OnceLock::new();
 static DEFAULT_JAVASCRIPT_RUNTIME_HOST: OnceLock<Arc<dyn HostJavaScriptRuntimeHost>> =
     OnceLock::new();
@@ -83,6 +96,7 @@ pub fn defaultHostRuntimeTaskSchedulerHost() -> Arc<dyn HostRuntimeTaskScheduler
 /// Bundles host-provided capabilities that the runtime can call through stable traits.
 #[derive(Clone, Default)]
 pub struct HostManager {
+    pub serialPortHost: Option<Arc<dyn SerialPortHost>>,
     pub fileSystemHost: Option<Arc<dyn FileSystemHost>>,
     pub webVisitHost: Option<Arc<dyn WebVisitHost>>,
     pub browserAutomationHost: Option<Arc<dyn BrowserAutomationHost>>,
@@ -91,6 +105,7 @@ pub struct HostManager {
     pub httpHost: Option<Arc<dyn HttpHost>>,
     pub webSocketHost: Option<Arc<dyn WebSocketHost>>,
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
+    pub toastHost: Option<Arc<dyn ToastHost>>,
     pub audioPlaybackHost: Option<Arc<dyn AudioPlaybackHost>>,
     pub bluetoothHost: Option<Arc<dyn BluetoothHost>>,
     pub deviceIoHost: Option<Arc<dyn DeviceIoHost>>,
@@ -125,7 +140,9 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            serialPortHost: None,
             systemOperationHost: None,
+            toastHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -162,7 +179,9 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            serialPortHost: None,
             systemOperationHost: None,
+            toastHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -202,7 +221,9 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            serialPortHost: None,
             systemOperationHost: None,
+            toastHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -243,7 +264,9 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: None,
             webSocketHost: None,
+            serialPortHost: None,
             systemOperationHost: Some(systemOperationHost),
+            toastHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -288,7 +311,9 @@ impl HostManager {
             composeDslWebViewHost: None,
             httpHost: Some(httpHost),
             webSocketHost: None,
+            serialPortHost: None,
             systemOperationHost: Some(systemOperationHost),
+            toastHost: None,
             audioPlaybackHost: None,
             bluetoothHost: None,
             deviceIoHost: None,
@@ -320,6 +345,13 @@ impl HostManager {
         self
     }
 
+    /// Adds frontend-owned transient toast presentation.
+    #[allow(non_snake_case)]
+    pub fn withToastHost(mut self, toastHost: Arc<dyn ToastHost>) -> Self {
+        self.toastHost = Some(toastHost);
+        self
+    }
+
     /// Replaces the host environment descriptor used by runtime capability queries.
     #[allow(non_snake_case)]
     pub fn withHostEnvironment(mut self, hostEnvironment: HostEnvironmentDescriptor) -> Self {
@@ -331,6 +363,12 @@ impl HostManager {
     #[allow(non_snake_case)]
     pub fn withWebSocketHost(mut self, webSocketHost: Arc<dyn WebSocketHost>) -> Self {
         self.webSocketHost = Some(webSocketHost);
+        self
+    }
+
+    /// Installs the platform serial device/accessory provider.
+    pub fn withSerialPortHost(mut self, host: Arc<dyn SerialPortHost>) -> Self {
+        self.serialPortHost = Some(host);
         self
     }
 

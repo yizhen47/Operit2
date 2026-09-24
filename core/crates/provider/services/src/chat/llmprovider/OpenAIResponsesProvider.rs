@@ -198,7 +198,34 @@ impl OpenAIResponsesProvider {
             &messagesArray,
             toolsJson.as_deref(),
         );
+        if self.responsesProviderType == "OPENAI_CODEX" {
+            normalize_codex_responses_body(&mut requestObject);
+        }
         Ok(requestObject)
+    }
+
+    /// Loads a fresh Codex access token before a Codex Responses request.
+    async fn apply_codex_access(&mut self) -> Result<(), AiServiceError> {
+        if self.responsesProviderType != "OPENAI_CODEX" {
+            return Ok(());
+        }
+        let tokens = self
+            .runtimeContext
+            .support()
+            .loadCodexTokens()
+            .map_err(AiServiceError::RequestFailed)?;
+        let tokens = crate::chat::llmprovider::CodexOAuth::ensure_fresh_tokens(tokens).await?;
+        self.runtimeContext
+            .support()
+            .saveCodexTokens(tokens.clone())
+            .map_err(AiServiceError::RequestFailed)?;
+        let account_id = crate::chat::llmprovider::CodexOAuth::account_id_from_tokens(&tokens)?;
+        self.api_key = tokens.accessToken;
+        self.customHeaders
+            .retain(|(name, _)| !name.eq_ignore_ascii_case("ChatGPT-Account-Id"));
+        self.customHeaders
+            .push(("ChatGPT-Account-Id".to_string(), account_id));
+        Ok(())
     }
 
     /// Returns whether the model configuration enables Responses web search.
@@ -390,6 +417,9 @@ impl OpenAIResponsesProvider {
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?,
             );
         }
+        if self.responsesProviderType == "OPENAI_CODEX" {
+            apply_codex_headers(&mut headers, &self.customHeaders)?;
+        }
         for (name, value) in &self.customHeaders {
             headers.insert(
                 HeaderName::from_bytes(name.as_bytes())
@@ -399,6 +429,104 @@ impl OpenAIResponsesProvider {
             );
         }
         Ok(headers)
+    }
+}
+
+/// Adds the ChatGPT account header required by the Codex responses endpoint.
+pub(crate) fn apply_codex_headers(
+    headers: &mut HeaderMap,
+    custom_headers: &[(String, String)],
+) -> Result<(), AiServiceError> {
+    let account_id = custom_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("ChatGPT-Account-Id"))
+        .map(|(_, value)| value.clone())
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            AiServiceError::RequestFailed(
+                "Codex authorization is missing the ChatGPT account id".to_string(),
+            )
+        })?;
+    headers.insert(
+        HeaderName::from_static("chatgpt-account-id"),
+        HeaderValue::from_str(&account_id)
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?,
+    );
+    headers.insert(
+        HeaderName::from_static("originator"),
+        HeaderValue::from_static("operit"),
+    );
+    headers.insert(
+        HeaderName::from_static("user-agent"),
+        HeaderValue::from_static("operit"),
+    );
+    Ok(())
+}
+
+/// Rewrites a Responses body into the shape accepted by the ChatGPT Codex endpoint.
+fn normalize_codex_responses_body(request: &mut Value) {
+    let Some(object) = request.as_object_mut() else {
+        return;
+    };
+    object.insert("store".to_string(), json!(false));
+    object.insert("stream".to_string(), json!(true));
+    object.remove("max_output_tokens");
+    object.remove("max_completion_tokens");
+    object.remove("max_tokens");
+    object.remove("temperature");
+    object.remove("top_p");
+    object.remove("user");
+    object.remove("truncation");
+    object.remove("prompt_cache_key");
+    object.remove("prompt_cache_options");
+    object.remove("prompt_cache_retention");
+    if object
+        .get("instructions")
+        .is_none_or(|value| value.is_null())
+    {
+        object.insert("instructions".to_string(), json!(""));
+    }
+    match object.get_mut("include") {
+        Some(Value::Array(include)) => {
+            let present = include.iter().any(|value| value.as_str() == Some("reasoning.encrypted_content"));
+            if !present {
+                include.push(json!("reasoning.encrypted_content"));
+            }
+        }
+        _ => {
+            object.insert(
+                "include".to_string(),
+                json!(["reasoning.encrypted_content"]),
+            );
+        }
+    }
+    if object.contains_key("tools") {
+        object.insert("parallel_tool_calls".to_string(), json!(true));
+    }
+    let is_fast = if let Some(Value::String(model)) = object.get_mut("model") {
+        if model.ends_with("-fast") {
+            *model = model.trim_end_matches("-fast").to_string();
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    if is_fast {
+        object.insert("service_tier".to_string(), json!("priority"));
+    } else if let Some(tier) = object.get("service_tier").and_then(Value::as_str) {
+        match tier.to_ascii_lowercase().as_str() {
+            "priority" | "fast" => {
+                object.insert("service_tier".to_string(), json!("priority"));
+            }
+            "ultrafast" => {}
+            _ => {
+                object.remove("service_tier");
+            }
+        }
+    } else {
+        object.remove("service_tier");
     }
 }
 
@@ -1200,6 +1328,11 @@ impl AIService for OpenAIResponsesProvider {
             state.cancelled = false;
         }
         self.reset_token_counts();
+        self.apply_codex_access().await?;
+        let mut request = request;
+        if self.responsesProviderType == "OPENAI_CODEX" {
+            request.stream = true;
+        }
         let requestBody = self.create_request_body(&request)?;
         if request.stream {
             let mut parent = OpenAIProvider::new_with_capabilities(
@@ -1553,8 +1686,8 @@ fn escape_xml_attribute(value: &str) -> String {
 mod tests {
     use super::{
         build_responses_web_search_chunks, extract_responses_metadata,
-        strip_responses_protocol_markup, OpenAIResponsesPayloadAdapter, UsageCounts,
-        RESPONSES_OUTPUT_ITEM_META_PROVIDER,
+        normalize_codex_responses_body, strip_responses_protocol_markup,
+        OpenAIResponsesPayloadAdapter, UsageCounts, RESPONSES_OUTPUT_ITEM_META_PROVIDER,
     };
     use serde_json::json;
 
@@ -1609,5 +1742,33 @@ mod tests {
                 outputTokens: 0,
             })
         );
+    }
+
+    #[test]
+    fn codex_fast_model_normalizes_to_base_model_and_priority_tier() {
+        let mut request = json!({
+            "model": "gpt-5.5-fast",
+            "messages": [{"role": "user", "content": "hello"}],
+            "max_output_tokens": 1000,
+            "temperature": 0.7
+        });
+        normalize_codex_responses_body(&mut request);
+        assert_eq!(request["model"], "gpt-5.5");
+        assert_eq!(request["service_tier"], "priority");
+        assert_eq!(request["store"], false);
+        assert_eq!(request["stream"], true);
+        assert!(request.get("max_output_tokens").is_none());
+        assert!(request.get("temperature").is_none());
+    }
+
+    #[test]
+    fn codex_standard_model_removes_service_tier() {
+        let mut request = json!({
+            "model": "gpt-5.5",
+            "messages": [{"role": "user", "content": "hello"}]
+        });
+        normalize_codex_responses_body(&mut request);
+        assert_eq!(request["model"], "gpt-5.5");
+        assert!(request.get("service_tier").is_none());
     }
 }

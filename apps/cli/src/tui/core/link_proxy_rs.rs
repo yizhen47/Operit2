@@ -796,6 +796,35 @@ mod tests {
         panic!("TUI embedded content stream did not complete; observed={observed:?}");
     }
 
+    /// Verifies TUI route permission errors retain the caller-facing diagnostics.
+    #[test]
+    fn tui_route_permission_error_keeps_structured_diagnostics() {
+        let error = CoreLinkError::withDetails(
+            "ROUTE_PERMISSION_DENIED",
+            "Space route chatMessagesFlow requires capability chat.read on caller tui-client",
+            CoreValue::Map(BTreeMap::from([
+                (
+                    "subject".to_string(),
+                    CoreValue::String("caller".to_string()),
+                ),
+                (
+                    "requiredCapability".to_string(),
+                    CoreValue::String("chat.read".to_string()),
+                ),
+                (
+                    "callerNodeId".to_string(),
+                    CoreValue::String("tui-client".to_string()),
+                ),
+            ])),
+        );
+        let message = error.to_string();
+        assert!(error.isRoutePermissionDenied());
+        assert!(message.contains("ROUTE_PERMISSION_DENIED"));
+        assert!(message.contains("caller"));
+        assert!(message.contains("chat.read"));
+        assert!(message.contains("tui-client"));
+    }
+
     /// Verifies TUI opens ChatMessage.contentStream through the embedded Link protocol.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn tui_core_opens_embedded_content_stream_from_message_flow() {

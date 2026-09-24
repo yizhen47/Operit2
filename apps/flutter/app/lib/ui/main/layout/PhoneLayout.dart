@@ -191,13 +191,15 @@ class _PhoneLayoutState extends State<PhoneLayout>
           final contentCornerRadius = widget.enableNavigationAnimation
               ? 24.0 * drawerProgress
               : 0.0;
-          final contentShadowElevation = widget.enableNavigationAnimation
-              ? 18.0 * drawerProgress
-              : 0.0;
           final drawerOffset = -widget.drawerWidth * (1.0 - drawerProgress);
-          final sidebarElevation = widget.enableNavigationAnimation
-              ? 16.0 * drawerProgress
-              : 3.0 * drawerProgress;
+          // Keep blur kernels stable while the transform layer moves.
+          final contentShadowVisible = drawerProgress > 0.001;
+          final contentShadowBlur = widget.enableNavigationAnimation
+              ? 18.0
+              : 0.0;
+          final sidebarShadowBlur = widget.enableNavigationAnimation
+              ? 16.0
+              : 3.0;
           final drawerScale = widget.enableNavigationAnimation
               ? 0.92 + (0.08 * drawerProgress)
               : 1.0;
@@ -233,9 +235,9 @@ class _PhoneLayoutState extends State<PhoneLayout>
                             clampedContentCornerRadius,
                           ),
                           boxShadow: <BoxShadow>[
-                            if (contentShadowElevation > 0)
+                            if (contentShadowVisible && contentShadowBlur > 0)
                               BoxShadow(
-                                blurRadius: contentShadowElevation,
+                                blurRadius: contentShadowBlur,
                                 color: Colors.black.withValues(alpha: 0.16),
                               ),
                           ],
@@ -264,35 +266,39 @@ class _PhoneLayoutState extends State<PhoneLayout>
               Positioned(
                 // Preserve the drawer subtree when the dismiss barrier changes.
                 key: const ValueKey<String>('phoneDrawerLayer'),
-                left: drawerOffset,
+                left: 0,
                 top: MediaQuery.paddingOf(context).top,
                 bottom: 0,
                 width: widget.drawerWidth,
-                child: Opacity(
-                  opacity: clampedDrawerContentAlpha,
-                  child: Transform.scale(
-                    alignment: Alignment.centerLeft,
-                    scale: drawerScale,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        boxShadow: <BoxShadow>[
-                          if (sidebarElevation > 0)
-                            BoxShadow(
-                              blurRadius: sidebarElevation,
-                              color: Colors.black.withValues(alpha: 0.12),
-                            ),
-                        ],
-                      ),
-                      child: OperitGlassSurface(
-                        color: appearance.containerColor,
-                        layer: OperitGlassSurfaceLayer.panel,
-                        transparentAlpha: 0.035,
-                        enableBackdropFilter: false,
-                        borderRadius: const BorderRadiusDirectional.only(
-                          topEnd: Radius.circular(16),
-                          bottomEnd: Radius.circular(16),
-                        ).resolve(Directionality.of(context)),
-                        child: animatedChild.drawerContent,
+                child: Transform.translate(
+                  // A fixed Stack slot keeps drag frames in the paint phase.
+                  offset: Offset(drawerOffset, 0),
+                  child: Opacity(
+                    opacity: clampedDrawerContentAlpha,
+                    child: Transform.scale(
+                      alignment: Alignment.centerLeft,
+                      scale: drawerScale,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          boxShadow: <BoxShadow>[
+                            if (drawerProgress > 0.001)
+                              BoxShadow(
+                                blurRadius: sidebarShadowBlur,
+                                color: Colors.black.withValues(alpha: 0.12),
+                              ),
+                          ],
+                        ),
+                        child: OperitGlassSurface(
+                          color: appearance.containerColor,
+                          layer: OperitGlassSurfaceLayer.panel,
+                          transparentAlpha: 0.035,
+                          enableBackdropFilter: false,
+                          borderRadius: const BorderRadiusDirectional.only(
+                            topEnd: Radius.circular(16),
+                            bottomEnd: Radius.circular(16),
+                          ).resolve(Directionality.of(context)),
+                          child: animatedChild.drawerContent,
+                        ),
                       ),
                     ),
                   ),

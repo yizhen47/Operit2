@@ -33,25 +33,6 @@ impl SystemOperationHost for WindowsSystemOperationHost {
         get_windows_system_language_code()
     }
 
-    fn toast(&self, message: &str) -> HostResult<()> {
-        if message.trim().is_empty() {
-            return Err(HostError::new("Must provide message parameter"));
-        }
-        let status = Command::new("msg")
-            .arg("*")
-            .arg("/TIME:5")
-            .arg(message)
-            .status()
-            .map_err(|error| HostError::new(format!("Toast failed: {error}")))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(HostError::new(format!(
-                "Toast command exited with {status}"
-            )))
-        }
-    }
-
     fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
         show_windows_notification(request)
     }

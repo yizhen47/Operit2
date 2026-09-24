@@ -1149,6 +1149,7 @@ fn parseOptionalBoolean(tool: &AITool, name: &str) -> Result<Option<bool>, Strin
     }
 }
 
+/// Resolves a chat surface identifier to its runtime slot.
 fn parseRuntimeSlot(value: Option<&str>) -> Result<RuntimeChatSlot, String> {
     match value.map(|value| value.trim().to_ascii_lowercase()) {
         Some(value) if value == "main" => Ok(RuntimeChatSlot::MAIN),

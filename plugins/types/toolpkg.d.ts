@@ -39,6 +39,11 @@ export namespace ToolPkg {
   export type HookEventNameVariant7 = "navigation_entry_action";
 
   /**
+   * Carries the manifest-extension hook discriminator.
+   */
+  export type HookEventNameVariant20 = "manifest_extension";
+
+  /**
    * Enumerates values to which an asynchronous generic hook may resolve.
    */
   export type HookReturnVariant3Output = JsonValue | void;
@@ -578,7 +583,7 @@ export namespace ToolPkg {
   /**
    * Enumerates every hook event that a ToolPkg plugin may register.
    */
-  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | HostEventName;
+  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | CoreCommandEventName | HostEventName | HookEventNameVariant20;
 
   /**
    * Accepts a JSON result, no result, or asynchronous completion from a generic hook.
@@ -809,6 +814,11 @@ export namespace ToolPkg {
    * Names the stages used to prepare and generate a conversation summary.
    */
   export type SummaryGenerateEventName = "before_prepare_summary_prompt" | "before_send_to_model" | "after_generate_summary";
+
+  /**
+   * Names the event dispatched for a registered Core command.
+   */
+  export type CoreCommandEventName = "core_command";
 
   /**
    * Identifies the role and purpose of one prompt-history turn.
@@ -1161,6 +1171,28 @@ export namespace ToolPkg {
   }
 
   /**
+   * Carries arguments supplied to a registered Core command.
+   */
+  export interface CoreCommandEventPayload {
+    /**
+     * Identifies the command registration selected by the host.
+     */
+    commandId: string;
+    /**
+     * Contains the command name entered by the user.
+     */
+    commandName: string;
+    /**
+     * Contains parsed command arguments without the command name.
+     */
+    args: string[];
+    /**
+     * Reports whether the caller requested structured JSON output.
+     */
+    json: boolean;
+  }
+
+  /**
    * Enumerates immediate and asynchronous results accepted from a tool lifecycle hook.
    */
   export interface ToolLifecycleHookObjectResult {
@@ -1213,6 +1245,29 @@ export namespace ToolPkg {
    * Enumerates immediate and asynchronous results accepted from a summary generate hook.
    */
   export type SummaryGenerateHookReturn = string | SummaryHookObjectResult | null | void | Promise<SummaryGenerateHookReturnVariant5Output>;
+
+  /**
+   * Contains text and structured output returned by a Core command handler.
+   */
+  export interface CoreCommandResult {
+    /**
+     * Contains text displayed as standard output.
+     */
+    stdout?: string;
+    /**
+     * Contains text displayed as standard error.
+     */
+    stderr?: string;
+    /**
+     * Contains the structured result used by JSON command invocations.
+     */
+    json?: JsonValue;
+  }
+
+  /**
+   * Accepts a Core command result immediately or asynchronously.
+   */
+  export type CoreCommandHandlerOutput = CoreCommandResult | Promise<CoreCommandResult>;
 
   /**
    * Callback invoked when an application or activity lifecycle event is dispatched.
@@ -1305,6 +1360,16 @@ export namespace ToolPkg {
    * Callback invoked when a summary generate event is dispatched.
    */
   export type SummaryGenerateHookHandler = (arg0: SummaryGenerateHookEvent) => SummaryGenerateHookReturn;
+
+  /**
+   * Callback invoked when the host executes a registered Core command.
+   */
+  export type CoreCommandHandler = (arg0: CoreCommandHookEvent) => CoreCommandHandlerOutput;
+
+  /**
+   * Callback invoked when a dependent ToolPkg manifest extension is delivered.
+   */
+  export type ManifestExtensionHookHandler = (arg0: ManifestExtensionHookEvent) => HookReturn;
 
   /**
    * Carries a hook discriminator, typed payload, package identity, and dispatch metadata.
@@ -1408,6 +1473,36 @@ export namespace ToolPkg {
      * Identifies the XML tag currently being rendered.
      */
     tagName?: string;
+    /**
+     * Identifies the conversation that owns the rendered XML block.
+     */
+    chatId?: string;
+  }
+
+  /**
+   * Carries data from one manifest extension declared by a dependent ToolPkg.
+   */
+  export interface ManifestExtensionEventPayload {
+    /**
+     * Identifies the manifest extension key selected for dispatch.
+     */
+    extensionKey: string;
+    /**
+     * Identifies the ToolPkg that declared the extension.
+     */
+    sourceToolPkgId: string;
+    /**
+     * Contains the source ToolPkg version.
+     */
+    sourceVersion: string;
+    /**
+     * Contains the selected manifest extension value.
+     */
+    extension: JsonValue;
+    /**
+     * Contains every extension field declared by the source manifest.
+     */
+    manifestExtensions: JsonObject;
   }
 
   /**
@@ -1924,6 +2019,12 @@ export namespace ToolPkg {
   }
 
   /**
+   * Combines shared dispatch metadata with Core command arguments.
+   */
+  export interface CoreCommandHookEvent extends HookEventBase<CoreCommandEventName, CoreCommandEventPayload> {
+  }
+
+  /**
    * Contains host configuration supplied to registered AI provider callbacks.
    */
   export interface AiProviderConfig extends JsonObject {
@@ -2293,6 +2394,43 @@ export namespace ToolPkg {
     title?: LocalizedText;
     /**
      * Controls whether the host retains the UI instance between visits.
+     */
+    keepAlive?: boolean;
+  }
+
+  /**
+   * Combines shared dispatch metadata with one manifest extension payload.
+   */
+  export interface ManifestExtensionHookEvent extends HookEventBase<HookEventNameVariant20, ManifestExtensionEventPayload> {
+  }
+
+  /**
+   * Identifies a host-owned chat composer extension location.
+   */
+  export type ChatComposerSlotName = "above_input";
+
+  /**
+   * Describes a Compose DSL screen contributed to a chat composer slot.
+   */
+  export interface ChatComposerSlotRegistration {
+    /**
+     * Uniquely identifies this slot contribution within the package.
+     */
+    id: string;
+    /**
+     * Selects the host-owned location that renders this contribution.
+     */
+    slot: ChatComposerSlotName;
+    /**
+     * Contains the Compose DSL screen rendered by the host.
+     */
+    screen: ComposeDslScreen;
+    /**
+     * Controls relative placement among contributions to the same slot.
+     */
+    order?: number;
+    /**
+     * Controls whether the host retains the screen while its chat remains open.
      */
     keepAlive?: boolean;
   }
@@ -3283,6 +3421,36 @@ export namespace ToolPkg {
   }
 
   /**
+   * Describes a slash command implemented by a ToolPkg callback.
+   */
+  export interface CoreCommandRegistration {
+    /**
+     * Uniquely identifies this command registration within the package.
+     */
+    id: string;
+    /**
+     * Selects the slash command name without the leading slash.
+     */
+    name: string;
+    /**
+     * Provides the localized title shown by command discovery surfaces.
+     */
+    title: LocalizedText;
+    /**
+     * Provides the localized command description.
+     */
+    description: LocalizedText;
+    /**
+     * Documents the command usage displayed by command discovery surfaces.
+     */
+    usage: string;
+    /**
+     * Provides the callback invoked when this command is executed.
+     */
+    function: CoreCommandHandler;
+  }
+
+  /**
    * Describes an AI provider and every callback required to operate it.
    */
   export interface AiProviderRegistration {
@@ -3386,6 +3554,20 @@ export namespace ToolPkg {
   }
 
   /**
+   * Registers a handler for a named manifest extension field.
+   */
+  export interface ManifestExtensionRegistration {
+    /**
+     * Identifies the manifest extension key accepted by this handler.
+     */
+    key: string;
+    /**
+     * Provides the callback invoked for matching dependent manifests.
+     */
+    function: ManifestExtensionHookHandler;
+  }
+
+  /**
    * Represents the IPC API exposed on a ToolPkg registry.
    */
   export interface IpcApi {
@@ -3433,6 +3615,10 @@ export namespace ToolPkg {
      * Registers a routable Compose DSL screen for the current plugin.
      */
     registerUiRoute(definition: UiRouteRegistration): void;
+    /**
+     * Registers a Compose DSL contribution for a host-owned chat composer slot.
+     */
+    registerChatComposerSlot(definition: ChatComposerSlotRegistration): void;
     /**
      * Adds a plugin action to a host navigation surface.
      */
@@ -3528,13 +3714,25 @@ export namespace ToolPkg {
      */
     registerSummaryGenerateHook(definition: SummaryGenerateHookRegistration): void;
     /**
+     * Registers a slash command handled by the current ToolPkg package.
+     */
+    registerCoreCommand(definition: CoreCommandRegistration): void;
+    /**
      * Registers an AI provider and its required operation callbacks.
      */
     registerAiProvider(definition: AiProviderRegistration): void;
     /**
+     * Registers a handler for one manifest extension declared by dependent ToolPkg packages.
+     */
+    registerManifestExtension(definition: ManifestExtensionRegistration): void;
+    /**
      * Extracts a packaged plugin resource and resolves to its readable path.
      */
     readResource(key: string, outputFileName?: string, internal?: boolean): Promise<string>;
+    /**
+     * Extracts a resource owned by another ToolPkg container and resolves to its readable path.
+     */
+    readResourceFromPackage(packageNameOrSubpackageId: string, key: string, outputFileName?: string, internal?: boolean): Promise<string>;
     /**
      * Returns the configuration directory for the selected plugin.
      */
@@ -3555,6 +3753,10 @@ declare global {
    * Registers a callback for an application or activity lifecycle event. The global binding delegates to the active ToolPkg registry.
    */
   function registerToolPkgAppLifecycleHook(definition: ToolPkg.AppLifecycleHookRegistration): void;
+  /**
+   * Registers a Compose DSL contribution for a host-owned chat composer slot. The global binding delegates to the active ToolPkg registry.
+   */
+  function registerToolPkgChatComposerSlot(definition: ToolPkg.ChatComposerSlotRegistration): void;
   /**
    * Registers a callback for chat input changes and submissions. The global binding delegates to the active ToolPkg registry.
    */
@@ -3578,6 +3780,10 @@ declare global {
    */
   function registerToolPkgChatViewHook(definition: ToolPkg.ChatViewHookRegistration): void;
   /**
+   * Registers a slash command handled by the current ToolPkg package. The global binding delegates to the active ToolPkg registry.
+   */
+  function registerToolPkgCoreCommand(definition: ToolPkg.CoreCommandRegistration): void;
+  /**
    * Registers a plugin widget on the desktop surface. The global binding delegates to the active ToolPkg registry.
    */
   function registerToolPkgDesktopWidget(definition: ToolPkg.DesktopWidgetRegistration): void;
@@ -3597,6 +3803,10 @@ declare global {
    * Registers a callback that supplies chat input menu toggles. The global binding delegates to the active ToolPkg registry.
    */
   function registerToolPkgInputMenuTogglePlugin(definition: ToolPkg.InputMenuTogglePluginRegistration): void;
+  /**
+   * Registers a handler for one dependent ToolPkg manifest extension. The global binding delegates to the active ToolPkg registry.
+   */
+  function registerToolPkgManifestExtension(definition: ToolPkg.ManifestExtensionRegistration): void;
   /**
    * Registers a callback that inspects or transforms messages. The global binding delegates to the active ToolPkg registry.
    */

@@ -798,6 +798,8 @@ pub enum RoutedCoreRequestKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoutedCoreRequest<T> {
     pub spaceId: String,
+    /// Identifies the original CoreNode that authorized and initiated this request.
+    pub originNodeId: String,
     pub targetNodeId: String,
     pub ttl: u32,
     #[serde(default)]
@@ -1017,6 +1019,12 @@ impl CoreLinkError {
         self.code == "COMMAND_ERROR"
     }
 
+    /// Returns whether this error represents a route capability denial.
+    #[allow(non_snake_case)]
+    pub fn isRoutePermissionDenied(&self) -> bool {
+        self.code == "ROUTE_PERMISSION_DENIED"
+    }
+
     #[track_caller]
     /// Creates an internal link error annotated with caller location and backtrace.
     pub fn internal(message: impl Into<String>) -> Self {
@@ -1031,7 +1039,8 @@ impl CoreLinkError {
                 line: caller.line(),
                 column: caller.column(),
             }),
-            backtrace: Some(backtrace.to_string()),
+            // Full formatting retains instruction addresses even without debug symbols.
+            backtrace: Some(format!("{backtrace:#}")),
         }
     }
 }
@@ -1039,6 +1048,11 @@ impl CoreLinkError {
 impl std::fmt::Display for CoreLinkError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{}: {}", self.code, self.message)?;
+        if self.code == "ROUTE_PERMISSION_DENIED" {
+            if let Some(details) = &self.details {
+                write!(formatter, "\nRoute permission details: {details:?}")?;
+            }
+        }
         if let Some(location) = &self.location {
             write!(
                 formatter,

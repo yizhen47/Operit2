@@ -26,12 +26,6 @@ impl SystemOperationHost for AndroidSystemOperationHost {
         ))
     }
 
-    fn toast(&self, message: &str) -> HostResult<()> {
-        Err(HostError::new(format!(
-            "Android toast requires the Android UI host bridge: {message}"
-        )))
-    }
-
     fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {
         Err(HostError::new(format!(
             "Android notification requires the Android UI host bridge: {}: {}",

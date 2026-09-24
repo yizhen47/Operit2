@@ -4,6 +4,8 @@ mod app;
 mod approval;
 #[path = "input/commands.rs"]
 mod commands;
+#[path = "compose/mod.rs"]
+mod compose;
 #[path = "config/mod.rs"]
 mod config;
 #[path = "transcript/empty_state.rs"]
@@ -55,11 +57,12 @@ use operit_util::GithubReleaseUtil::{FullUpdateStatus, FullUpdateTarget, GithubR
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{mpsc, Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use crate::{
-    create_cli_core_application_configured, initialize_shell_chat, parse_shell_args, ShellArgs,
+    create_cli_core_application_configured_with_toast_host, initialize_shell_chat,
+    parse_shell_args, ShellArgs,
 };
 
 #[derive(Clone, Debug)]
@@ -80,26 +83,32 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     let approval_bridge = TuiApprovalBridge::new();
     let initial_chat_id_cell = Arc::new(StdMutex::new(None::<String>));
     let language_cell = Arc::new(StdMutex::new(None::<TuiLanguage>));
+    let (toast_sender, toast_receiver) = mpsc::channel::<String>();
+    let toast_host = tui_toast_host(toast_sender);
     let shell_args_for_core = shell_args.clone();
     let approval_bridge_for_core = approval_bridge.clone();
     let initial_chat_id_for_core = initial_chat_id_cell.clone();
     let language_for_core = language_cell.clone();
-    let core_application = create_cli_core_application_configured("client", move |local_core| {
-        let language = {
-            let application = local_core.localApplicationMut();
-            TuiLanguage::from_context(&application.hostManager)?
-        };
-        let initial_chat_id =
-            initialize_shell_chat(local_core.localApplicationMut(), &shell_args_for_core)?;
-        install_local_permission_requester(local_core, approval_bridge_for_core);
-        *language_for_core
-            .lock()
-            .expect("TUI language cell lock must not be poisoned") = Some(language);
-        *initial_chat_id_for_core
-            .lock()
-            .expect("TUI initial chat cell lock must not be poisoned") = Some(initial_chat_id);
-        Ok(())
-    })
+    let core_application = create_cli_core_application_configured_with_toast_host(
+        "client",
+        toast_host,
+        move |local_core| {
+            let language = {
+                let application = local_core.localApplicationMut();
+                TuiLanguage::from_context(&application.hostManager)?
+            };
+            let initial_chat_id =
+                initialize_shell_chat(local_core.localApplicationMut(), &shell_args_for_core)?;
+            install_local_permission_requester(local_core, approval_bridge_for_core);
+            *language_for_core
+                .lock()
+                .expect("TUI language cell lock must not be poisoned") = Some(language);
+            *initial_chat_id_for_core
+                .lock()
+                .expect("TUI initial chat cell lock must not be poisoned") = Some(initial_chat_id);
+            Ok(())
+        },
+    )
     .await?;
     let link_server_task = start_tui_link_server(&core_application, &link_args).await?;
     join_tui_link_sessions(&core_application, &link_args).await?;
@@ -136,6 +145,7 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
         startup_install_prompt,
         startup_update_prompt,
         startup_workspace_prompt_path,
+        toast_receiver,
     )
     .await?;
     let result = tui.run().await;
@@ -143,6 +153,15 @@ pub(crate) async fn run_tui_command(args: &[String]) -> Result<(), String> {
     stop_tui_link_server(link_server_task).await;
     core_application.shutdown().await;
     result
+}
+
+/// Creates the toast host that feeds the active TUI event loop.
+fn tui_toast_host(sender: mpsc::Sender<String>) -> Arc<dyn operit_host_api::ToastHost> {
+    Arc::new(move |message: &str| {
+        sender.send(message.to_string()).map_err(|error| {
+            operit_host_api::HostError::new(format!("TUI toast delivery failed: {error}"))
+        })
+    })
 }
 
 /// Splits TUI Link startup arguments from normal shell startup arguments.
@@ -305,7 +324,7 @@ fn install_local_permission_requester(
     let handler = core.localApplicationMut().toolHandler.clone();
     handler
         .getToolPermissionSystem()
-        .setAsyncPermissionRequester(move |tool, description| {
+        .setAsyncPermissionRequester(move |tool, description, _chatId| {
             let approval_bridge = approval_bridge.clone();
             async move {
                 tokio::task::spawn_blocking(move || approval_bridge.request(&tool, &description))

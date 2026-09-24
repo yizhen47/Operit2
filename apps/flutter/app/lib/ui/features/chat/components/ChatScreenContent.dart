@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import 'ChatToolPermissionPanel.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
@@ -73,6 +74,8 @@ class ChatScreenContent extends StatelessWidget {
     required this.onCancelMessage,
     required this.pendingQueueMessages,
     required this.isPendingQueueExpanded,
+    required this.toolPermissionRequests,
+    required this.onToolPermissionDecision,
     required this.onPendingQueueExpandedChange,
     required this.onDeletePendingQueueMessage,
     required this.onEditPendingQueueMessage,
@@ -145,6 +148,14 @@ class ChatScreenContent extends StatelessWidget {
   final VoidCallback onCancelMessage;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
+  final List<core_proxy.RuntimeHostInteractionToolPermissionRequest>
+  toolPermissionRequests;
+  final Future<void> Function(
+    String chatId,
+    String requestId,
+    ChatToolPermissionResult result,
+  )
+  onToolPermissionDecision;
   final ValueChanged<bool> onPendingQueueExpandedChange;
   final ValueChanged<int> onDeletePendingQueueMessage;
   final ValueChanged<int> onEditPendingQueueMessage;
@@ -241,6 +252,28 @@ class ChatScreenContent extends StatelessWidget {
                   ],
                 ),
               ),
+              if (!isPreparingChatSwitch && toolPermissionRequests.isNotEmpty)
+                Align(
+                  alignment: Alignment.bottomCenter,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: themePreferenceSnapshot.bubbleWideLayoutEnabled
+                          ? chatWideContentMaxWidth
+                          : chatContentMaxWidth,
+                    ),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: themePreferenceSnapshot.chatInputFloating
+                            ? 8
+                            : 0,
+                      ),
+                      child: ChatToolPermissionPanel(
+                        request: toolPermissionRequests.first,
+                        onRespond: onToolPermissionDecision,
+                      ),
+                    ),
+                  ),
+                ),
               // Keep the input subtree mounted during chat switches: tearing
               // it down deactivates tooltip states whose global pointer
               // routes then crash on ancestor lookups ("deactivated
@@ -603,6 +636,7 @@ class ChatScreenContent extends StatelessWidget {
       final image = await ChatShareImageGenerator.generate(
         context: context,
         messages: _selectedVisibleMessages,
+        splitMarkdownContent: viewModel.splitMarkdownContent,
       );
       if (!context.mounted) {
         return;

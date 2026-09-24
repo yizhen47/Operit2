@@ -215,6 +215,12 @@ fn render_dart_clients(
             "  {class_name} get {getter_name} => {class_name}._(bridge, {});\n",
             object.object_id
         ));
+        if object.schema_key == "chatRuntimeHolderMain" {
+            output.push_str(&format!(
+                "  /// Returns the generated proxy for one detached chat runtime.\n  {class_name} chatRuntimeHolderMainForSlot(String slotId) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': slotId}});\n",
+                object.object_id
+            ));
+        }
         if object.schema_key == "repository.memoryRepository" {
             output.push_str(&format!(
                 "  /// Returns the generated proxy for one memory owner.\n  {class_name} repositoryMemoryRepositoryForOwner(String ownerKey) => {class_name}._(bridge, {}, objectArgs: <String, Object?>{{'__core_instance_id': ownerKey}});\n",

@@ -16,6 +16,7 @@ import 'WorkspaceHomeContent.dart';
 import 'WorkspaceOverviewModels.dart';
 import 'WorkspaceTabModels.dart';
 import 'terminal/WorkspaceTerminalContent.dart';
+import '../../../../main/screens/OperitScreens.dart';
 
 class WorkspaceTabContent extends StatelessWidget {
   const WorkspaceTabContent({
@@ -180,6 +181,17 @@ class WorkspaceTabContent extends StatelessWidget {
           onOpenBrowser: onOpenBrowser,
           splitMarkdownContent: splitMarkdownContent,
         );
+      case WorkspaceTabKind.plugin:
+        final packageName = tab.pluginPackageName;
+        final moduleId = tab.pluginUiModuleId;
+        if (packageName == null || moduleId == null) {
+          return const SizedBox.shrink();
+        }
+        return ToolPkgComposeDslScreenRoute(
+          containerPackageName: packageName,
+          uiModuleId: moduleId,
+          title: tab.title,
+        ).build(context);
     }
   }
 }

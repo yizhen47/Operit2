@@ -47,15 +47,17 @@ pub fn createLocalCore(
     let hostSecretStore = runtimeStorageHost.clone();
     let runtimeStorageWriteHost = runtimeStorageHost.clone();
     let archiveStagingHost = Arc::new(WebArchiveStagingHost::new());
+    let systemOperationHost = Arc::new(WebSystemOperationHost::new());
     let mut context = HostManager::withFileSystemWebVisitSystemOperationAndManagedRuntimeHosts(
         Arc::new(WebFileSystemHost::new()),
         Arc::new(WebWebVisitHost::new()),
         Arc::new(WebHttpHost::new()),
-        Arc::new(WebSystemOperationHost::new()),
+        systemOperationHost.clone(),
         Arc::new(WebManagedRuntimeHost::new()),
         runtimeStorageHost,
         runtimeSqliteHost,
     )
+    .withToastHost(systemOperationHost)
     .withHostSecretStore(hostSecretStore)
     .withRuntimeStorageWriteHost(runtimeStorageWriteHost)
     .withArchiveStagingHost(archiveStagingHost);

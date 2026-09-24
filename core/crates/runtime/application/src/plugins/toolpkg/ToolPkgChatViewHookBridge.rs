@@ -80,6 +80,7 @@ impl ToolPkgChatViewHookBridge {
     /// Dispatches chat view hooks through the runtime registered by the common bridge.
     #[allow(non_snake_case)]
     pub fn dispatchRegisteredChatViewEvent(event: ChatViewEvent, params: ChatViewHookParams) {
+        updateReplayableOpenViewParams(&event, &params);
         let Some(runtime) = CHAT_VIEW_RUNTIME.get() else {
             return;
         };

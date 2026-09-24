@@ -241,6 +241,7 @@ const _composeNodeTypes = <String, String>{
   'filledtonalicontogglebutton': 'FilledTonalIconToggleButton',
   'filterchip': 'FilterChip',
   'floatingactionbutton': 'FloatingActionButton',
+  'flowrow': 'FlowRow',
   'horizontaldivider': 'HorizontalDivider',
   'icon': 'Icon',
   'iconbutton': 'IconButton',

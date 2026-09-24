@@ -8,6 +8,8 @@ pub mod ApiKeyPoolAvailabilityTester;
 pub mod ApiKeyProvider;
 #[path = "ClaudeProvider.rs"]
 pub mod ClaudeProvider;
+#[path = "CodexOAuth.rs"]
+pub mod CodexOAuth;
 #[path = "DeepseekProvider.rs"]
 pub mod DeepseekProvider;
 #[path = "DoubaoAIProvider.rs"]

@@ -147,6 +147,7 @@ val syncOperitPlugins = tasks.register<Exec>("syncOperitPlugins") {
         operitPluginSyncScript.absolutePath,
         "--source",
         "runtime",
+        "--no-hot-reload",
     )
 }
 

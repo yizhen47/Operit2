@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
 import '../../../../theme/OperitTheme.dart';
+import '../../../../main/layout/SidebarDockController.dart';
 import 'WorkspaceLayoutMetrics.dart';
 import 'WorkspaceTabModels.dart';
 
@@ -72,7 +73,7 @@ class WorkspaceTabStrip extends StatelessWidget {
               itemBuilder: (context, index) {
                 final tab = tabs[index];
                 final selected = index == selectedIndex;
-                return _WorkspaceTabButton(
+                final button = _WorkspaceTabButton(
                   tab: tab,
                   title: _tabTitle(l10n, tab),
                   selected: selected,
@@ -85,6 +86,7 @@ class WorkspaceTabStrip extends StatelessWidget {
                         }
                       : null,
                 );
+                return _buildTabDragSource(context, tab, button);
               },
             ),
           ],
@@ -148,7 +150,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
             itemBuilder: (context, index) {
               final tab = tabs[index];
               final selected = index == selectedIndex;
-              return _TermuxWorkspaceTabButton(
+              final button = _TermuxWorkspaceTabButton(
                 title: tabTitle(tab),
                 selected: selected,
                 closable: tab.closable,
@@ -164,12 +166,44 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
                   onClosed(index);
                 },
               );
+              return _buildTabDragSource(context, tab, button);
             },
           ),
         ),
       ),
     );
   }
+}
+
+/// Wraps plugin and regular workspace tabs with their appropriate drag payload.
+Widget _buildTabDragSource(
+  BuildContext context,
+  WorkspaceTab tab,
+  Widget child,
+) {
+  if (tab.kind == WorkspaceTabKind.home) {
+    return child;
+  }
+  if (tab.kind == WorkspaceTabKind.plugin && tab.pluginEntryId != null) {
+    return Draggable<SidebarDockDragPayload>(
+      data: SidebarDockDragPayload(entryId: tab.pluginEntryId!),
+      feedback: Material(
+        elevation: 8,
+        child: Opacity(opacity: 0.92, child: child),
+      ),
+      childWhenDragging: Opacity(opacity: 0.32, child: child),
+      child: child,
+    );
+  }
+  return Draggable<WorkspaceTabDragPayload>(
+    data: WorkspaceTabDragPayload(tab: tab),
+    feedback: Material(
+      elevation: 8,
+      child: Opacity(opacity: 0.92, child: child),
+    ),
+    childWhenDragging: Opacity(opacity: 0.32, child: child),
+    child: child,
+  );
 }
 
 class _TermuxWorkspaceTabButton extends StatelessWidget {
@@ -386,5 +420,7 @@ String _tabTitle(AppLocalizations l10n, WorkspaceTab tab) {
       return 'visit_web';
     case WorkspaceTabKind.filePreview:
       return l10n.filePreview;
+    case WorkspaceTabKind.plugin:
+      return '插件';
   }
 }

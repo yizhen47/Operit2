@@ -3,6 +3,8 @@
 pub mod HostManager;
 pub mod PluginSdkIpc;
 pub mod TimeUtils;
+pub mod SerialPort;
+pub use SerialPort::{SerialPortConnection, SerialPortHost};
 
 pub use PluginSdkIpc::{
     pluginSdkIpcError, PluginSdkIpcEndpoint, PluginSdkIpcHost, PluginSdkIpcSessionCallbacks,
@@ -2597,9 +2599,23 @@ pub struct SystemNotificationRequest {
     pub activation: SystemNotificationActivation,
 }
 
+pub trait ToastHost: Send + Sync {
+    /// Presents one transient message inside the active frontend.
+    fn toast(&self, message: &str) -> HostResult<()>;
+}
+
+impl<F> ToastHost for F
+where
+    F: Fn(&str) -> HostResult<()> + Send + Sync,
+{
+    /// Invokes the frontend-owned toast presenter.
+    fn toast(&self, message: &str) -> HostResult<()> {
+        self(message)
+    }
+}
+
 pub trait SystemOperationHost: Send + Sync {
     fn getSystemLanguageCode(&self) -> HostResult<String>;
-    fn toast(&self, message: &str) -> HostResult<()>;
     fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()>;
     fn modifySystemSetting(
         &self,

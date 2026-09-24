@@ -381,7 +381,7 @@ class _ChatSessionSummarySectionState
 
   /// Subscribes to the runtime-owned token statistic streams.
   void _subscribeToTokenStatistics() {
-    final holder = _clients.chatRuntimeHolderMain;
+    final holder = widget.viewModel.chatCore;
     _currentWindowSizeSubscription = holder.currentWindowSizeFlow().listen((
       value,
     ) {
@@ -666,7 +666,7 @@ class _CharacterCardSelectorDialogState
       _switchingCharacterCardId = card.id;
     });
     try {
-      await _clients.chatRuntimeHolderMain.switchActiveCharacterCardTarget(
+      await widget.viewModel.chatCore.switchActiveCharacterCardTarget(
         characterCardId: card.id,
       );
       if (mounted) {

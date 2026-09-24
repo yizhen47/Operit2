@@ -438,6 +438,11 @@ mod tests {
     crate::impl_rejecting_js_tools_host!(TestJsExecutionHost);
 
     impl JsExecutionHost for TestJsExecutionHost {
+        /// Returns an empty catalog for tests that do not install runtime tools.
+        fn get_tool_catalog(&self) -> Result<Value, String> {
+            Ok(serde_json::json!({ "tools": [] }))
+        }
+
         /// Rejects unexpected host tool calls from package execution tests.
         fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult {
             JsToolCallResult {

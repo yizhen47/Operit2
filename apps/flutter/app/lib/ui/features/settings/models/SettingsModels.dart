@@ -48,7 +48,7 @@ class SettingsCategorySpec {
         title: l10n.settingsCategoryModelTitle,
         subtitle: l10n.settingsCategoryModelSubtitle,
         description: l10n.settingsCategoryModelDescription,
-        icon: Icons.hub_outlined,
+        icon: Icons.smart_toy_outlined,
       ),
       SettingsCategory.localModels => SettingsCategorySpec(
         title: l10n.settingsCategoryLocalModelsTitle,

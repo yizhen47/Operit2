@@ -58,17 +58,26 @@ impl ToolPkgXmlRenderBridge {
 
     /// Renders one XML block through registered ToolPkg hooks.
     #[allow(non_snake_case)]
-    pub fn renderRegisteredXml(tagName: String, xmlContent: String) -> Value {
+    pub fn renderRegisteredXml(
+        tagName: String,
+        xmlContent: String,
+        chatId: Option<String>,
+    ) -> Value {
         let Some(runtime) = XML_RENDER_RUNTIME.get() else {
             return Value::Null;
         };
-        renderXml(runtime, tagName, xmlContent)
+        renderXml(runtime, tagName, xmlContent, chatId)
     }
 }
 
 /// Invokes matching XML render hooks and returns the first handled result.
 #[allow(non_snake_case)]
-fn renderXml(runtime: &ToolPkgBridgeRuntime, tagName: String, xmlContent: String) -> Value {
+fn renderXml(
+    runtime: &ToolPkgBridgeRuntime,
+    tagName: String,
+    xmlContent: String,
+    chatId: Option<String>,
+) -> Value {
     let normalizedTag = tagName.trim().to_ascii_lowercase();
     if normalizedTag.is_empty() {
         return Value::Null;
@@ -106,6 +115,7 @@ fn renderXml(runtime: &ToolPkgBridgeRuntime, tagName: String, xmlContent: String
             serde_json::json!({
                 "xmlContent": xmlContent,
                 "tagName": tagName,
+                "chatId": chatId.clone(),
             }),
             None,
             None,

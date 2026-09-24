@@ -129,11 +129,18 @@
             try {
                 var parsed = parseToolCallArguments(rawArgs);
                 var callbackId = nextToolCallbackId();
+                var ownerCallId = String(root.__operitCurrentCallId || '');
+                if (typeof root.__operitRetainCallReference === 'function') {
+                    root.__operitRetainCallReference(ownerCallId);
+                }
                 var intermediateCallbackId =
                     parsed.options && parsed.options.onIntermediateResult
                         ? nextToolCallbackId()
                         : '';
                 windowRef[callbackId] = function(result, isError) {
+                    if (typeof root.__operitActivateCall === 'function') {
+                        root.__operitActivateCall(ownerCallId);
+                    }
                     delete windowRef[callbackId];
                     if (intermediateCallbackId) {
                         delete windowRef[intermediateCallbackId];
@@ -143,14 +150,23 @@
                     } catch (error) {
                         reject(error);
                     }
+                    Promise.resolve().then(function() {
+                        if (typeof root.__operitReleaseCallReference === 'function') {
+                            root.__operitReleaseCallReference(ownerCallId);
+                        }
+                    });
                 };
                 if (intermediateCallbackId) {
                     windowRef[intermediateCallbackId] = function(result, isError) {
-                        if (isError) {
-                            reject(parseToolResult(result, true));
-                            return;
+                        try {
+                            if (isError) {
+                                reject(parseToolResult(result, true));
+                                return;
+                            }
+                            parsed.options.onIntermediateResult(parseToolResult(result, false));
+                        } catch (error) {
+                            reject(error);
                         }
-                        parsed.options.onIntermediateResult(parseToolResult(result, false));
                     };
                     callNative(
                         'callToolAsyncStreaming',

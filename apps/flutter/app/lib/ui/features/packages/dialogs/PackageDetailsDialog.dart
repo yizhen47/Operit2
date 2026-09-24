@@ -164,6 +164,30 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
               ],
               const SizedBox(height: 12),
               _DescriptionText(description),
+              if (widget.plugin.dependencyIssues.isNotEmpty) ...<Widget>[
+                const SizedBox(height: 16),
+                const _SectionTitle(text: '前置插件错误'),
+                const SizedBox(height: 8),
+                for (final issue in widget.plugin.dependencyIssues)
+                  _ModuleTile(
+                    title: issue.id,
+                    subtitle: _dependencyIssueDescription(issue),
+                    icon: Icons.error_outline,
+                    footer: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: <Widget>[
+                        _SmallBadge(text: _dependencyIssueStatus(issue)),
+                        if (issue.requiredMinVersion != null)
+                          _SmallBadge(text: '>= ${issue.requiredMinVersion}'),
+                        if (issue.requiredMaxVersion != null)
+                          _SmallBadge(text: '<= ${issue.requiredMaxVersion}'),
+                        if (issue.installedVersion != null)
+                          _SmallBadge(text: '当前 v${issue.installedVersion}'),
+                      ],
+                    ),
+                  ),
+              ],
               if (details != null && details.requires.isNotEmpty) ...<Widget>[
                 const SizedBox(height: 16),
                 const _SectionTitle(text: 'Requirements'),
@@ -214,13 +238,21 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
               if (widget.enabled && widget.plugin.desktopWidgets.isNotEmpty)
                 TextButton.icon(
                   icon: const Icon(Icons.widgets_outlined),
-                  label: Text(l10n.desktopWidgetsCount(widget.plugin.desktopWidgets.length)),
-                  onPressed: () => Navigator.of(context).push<void>(MaterialPageRoute(
-                    builder: (_) => ToolPkgDesktopWidgetsScreen(
-                      clients: GeneratedCoreProxyClients(widget.packageManager.bridge),
-                      plugin: widget.plugin,
+                  label: Text(
+                    l10n.desktopWidgetsCount(
+                      widget.plugin.desktopWidgets.length,
                     ),
-                  )),
+                  ),
+                  onPressed: () => Navigator.of(context).push<void>(
+                    MaterialPageRoute(
+                      builder: (_) => ToolPkgDesktopWidgetsScreen(
+                        clients: GeneratedCoreProxyClients(
+                          widget.packageManager.bridge,
+                        ),
+                        plugin: widget.plugin,
+                      ),
+                    ),
+                  ),
                 ),
               if (details != null &&
                   details.toolboxUiModules.isNotEmpty) ...<Widget>[
@@ -320,6 +352,32 @@ class _PluginDetailsDialogState extends State<PluginDetailsDialog> {
       ],
     );
   }
+}
+
+/// Provides a user-facing explanation for one structured ToolPkg dependency issue.
+String _dependencyIssueDescription(core_proxy.ToolPkgDependencyIssue issue) {
+  return switch (issue.code) {
+    'missing' => '未安装此前置插件。',
+    'disabled' => '此前置插件已安装，但当前未启用。',
+    'version_incompatible' => '此前置插件的版本不满足 manifest 声明的版本范围。',
+    'load_order' => '此前置插件必须排在当前插件之前加载。',
+    _ => throw StateError(
+      'Unsupported ToolPkg dependency issue code: ${issue.code}',
+    ),
+  };
+}
+
+/// Provides a compact label for one structured ToolPkg dependency issue.
+String _dependencyIssueStatus(core_proxy.ToolPkgDependencyIssue issue) {
+  return switch (issue.code) {
+    'missing' => '未安装',
+    'disabled' => '未启用',
+    'version_incompatible' => '版本不兼容',
+    'load_order' => '加载顺序错误',
+    _ => throw StateError(
+      'Unsupported ToolPkg dependency issue code: ${issue.code}',
+    ),
+  };
 }
 
 class _PackageDialogTitle extends StatelessWidget {

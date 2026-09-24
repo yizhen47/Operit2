@@ -18,7 +18,7 @@ ANDROID_SIGNING = REPO_ROOT / "tools" / "release" / "secrets" / "android-signing
 OHOS_SIGNING = REPO_ROOT / "tools" / "release" / "secrets" / "ohos-signing" / "ohos-signing.properties"
 OHOS_LOCAL_PROPERTIES = FLUTTER_APP_DIR / "ohos" / "local.properties"
 CLI_ARCH_CHOICES = ("host", "all", "x86_64", "aarch64")
-PRODUCT_CHOICES = ("app", "cli", "all")
+PRODUCT_CHOICES = ("app", "cli", "esp32", "all")
 
 
 @dataclass(frozen=True)
@@ -138,8 +138,16 @@ def check_cli_rust_targets(target_platform: str, cli_arches: str) -> list[CheckR
     return results
 
 
-# Checks local common tools used by App and CLI builds.
+# Checks local common tools used by the selected build.
 def check_common_tools(products: str) -> list[CheckResult]:
+    if products == "esp32":
+        return [
+            check_command("git", ["--version"]),
+            check_command("cargo", ["--version"]),
+            check_command("rustup", ["--version"]),
+            check_command("node", ["--version"]),
+            check_command("npm", ["--version"]),
+        ]
     results = [
         check_command("git", ["--version"]),
         check_command("cargo", ["--version"]),
@@ -153,6 +161,22 @@ def check_common_tools(products: str) -> list[CheckResult]:
     ]
     if products in ("app", "all"):
         results.append(check_directory("Flutter app directory", FLUTTER_APP_DIR))
+    return results
+
+
+# Checks the ESP32-specific compiler, flasher, and Emscripten installation.
+def check_esp32_tools() -> list[CheckResult]:
+    emsdk = os.environ.get("EMSDK", "").strip()
+    results = [
+        check_directory("ESP32 app directory", REPO_ROOT / "apps" / "esp32"),
+        check_directory("ESP32 editor directory", REPO_ROOT / "tools" / "esp32-editor"),
+        check_command("espflash", ["--version"]),
+        check_command("ldproxy"),
+    ]
+    if not emsdk:
+        results.append(missing("EMSDK", "set EMSDK to the installed Emscripten SDK directory"))
+    else:
+        results.append(check_directory("Emscripten SDK", Path(emsdk).expanduser()))
     return results
 
 
@@ -270,6 +294,8 @@ def build_checks(args: argparse.Namespace) -> list[CheckResult]:
         checks.extend(check_cli_rust_targets(host_platform(), args.cli_arches))
         checks.extend(check_windows_aarch64_cli(args.cli_arches))
         checks.extend(check_linux_cross_cli(args.cli_arches))
+    if args.products == "esp32":
+        checks.extend(check_esp32_tools())
     if args.release_script and args.products in ("app", "all"):
         checks.extend(check_release_signing_files())
     if args.wsl:

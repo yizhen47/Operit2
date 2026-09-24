@@ -13,6 +13,7 @@ final class AppleRuntimeChannel: NSObject {
   private static var pendingNotificationActivations: [[String: Any]] = []
   private static var notificationActivationReceiverReady = false
   private var channel: FlutterMethodChannel
+  private var attachedChannels: [FlutterMethodChannel] = []
   private let workQueue = DispatchQueue(label: "operit.runtime.apple", qos: .userInitiated)
   private var handle: UnsafeMutableRawPointer?
   private var audioPlayers: [String: AVAudioPlayer] = [:]
@@ -40,7 +41,7 @@ final class AppleRuntimeChannel: NSObject {
   private var systemEventObservers: [NSObjectProtocol] = []
   private var hostEventMonitoringInstalled = false
 
-  /// Attaches the process-level Runtime channel to the current Flutter engine.
+  /// Registers the process-level Runtime with one Flutter engine.
   static func register(binaryMessenger: FlutterBinaryMessenger) {
     AppleCrashChannel.register(binaryMessenger: binaryMessenger)
     if let shared {
@@ -65,16 +66,17 @@ final class AppleRuntimeChannel: NSObject {
     installMethodHandler()
   }
 
-  /// Rebinds the existing Runtime to a replacement Flutter engine.
+  /// Registers another engine without disconnecting existing application windows.
   private func attach(binaryMessenger: FlutterBinaryMessenger) {
-    channel.setMethodCallHandler(nil)
-    channel = FlutterMethodChannel(name: "operit/runtime", binaryMessenger: binaryMessenger)
-    installMethodHandler()
+    let attachedChannel = FlutterMethodChannel(
+      name: "operit/runtime", binaryMessenger: binaryMessenger)
+    installMethodHandler(on: attachedChannel)
+    attachedChannels.append(attachedChannel)
   }
 
-  /// Installs method dispatch on the currently attached Flutter channel.
-  private func installMethodHandler() {
-    channel.setMethodCallHandler { [weak self] call, result in
+  /// Installs method dispatch for one Flutter engine's Runtime channel.
+  private func installMethodHandler(on channel: FlutterMethodChannel? = nil) {
+    (channel ?? self.channel).setMethodCallHandler { [weak self] call, result in
       self?.handle(call: call, result: result)
     }
   }
@@ -977,10 +979,9 @@ final class AppleRuntimeChannel: NSObject {
 }
 
 private enum AppleCrashChannel {
-  private static var channel: FlutterMethodChannel?
+  private static var channels: [FlutterMethodChannel] = []
 
   static func register(binaryMessenger: FlutterBinaryMessenger) {
-    channel?.setMethodCallHandler(nil)
     let crashChannel = FlutterMethodChannel(name: "operit/crash", binaryMessenger: binaryMessenger)
     crashChannel.setMethodCallHandler { call, result in
       guard call.method == "present" else {
@@ -1002,7 +1003,7 @@ private enum AppleCrashChannel {
         result(nil)
       }
     }
-    channel = crashChannel
+    channels.append(crashChannel)
   }
 }
 

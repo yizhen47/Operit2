@@ -393,6 +393,8 @@ class UserPreferencesManager {
   static const String CHAT_STYLE_BUBBLE = 'bubble';
   static const String INPUT_STYLE_CLASSIC = 'classic';
   static const String INPUT_STYLE_AGENT = 'agent';
+  static const String CHAT_HISTORY_GROUPING_CHARACTER = 'character';
+  static const String CHAT_HISTORY_GROUPING_WORKSPACE = 'workspace';
   static const String BUBBLE_IMAGE_RENDER_MODE_TILED_NINE_SLICE =
       'tiled_nine_slice';
   static const String BUBBLE_IMAGE_RENDER_MODE_NINE_PATCH = 'nine_patch';
@@ -422,6 +424,8 @@ class UserPreferencesManager {
   );
 
   static const String _fileName = 'user_preferences.preferences.json';
+  static const String _KEY_CHAT_HISTORY_GROUPING_MODE =
+      'chat_history_grouping_mode';
 
   static const ThemePreferenceSnapshot defaultThemePreferenceSnapshot =
       ThemePreferenceSnapshot(
@@ -768,6 +772,28 @@ class UserPreferencesManager {
       _KEY_LONG_PASTED_TEXT_INPUT_THRESHOLD: threshold.toString(),
     });
     longPastedTextInputSettings.value = settings;
+  }
+
+  /// Loads the persisted sidebar conversation grouping mode.
+  Future<String?> loadChatHistoryGroupingMode() async {
+    final values = await _getStrings(<String>[_KEY_CHAT_HISTORY_GROUPING_MODE]);
+    return values[_KEY_CHAT_HISTORY_GROUPING_MODE];
+  }
+
+  /// Persists the sidebar conversation grouping mode.
+  Future<void> saveChatHistoryGroupingMode(String mode) async {
+    switch (mode) {
+      case CHAT_HISTORY_GROUPING_CHARACTER:
+      case CHAT_HISTORY_GROUPING_WORKSPACE:
+        break;
+      default:
+        throw ArgumentError.value(
+          mode,
+          'mode',
+          'is not a supported grouping mode',
+        );
+    }
+    await _setStrings(<String, String>{_KEY_CHAT_HISTORY_GROUPING_MODE: mode});
   }
 
   /// Resolves one target-scoped theme snapshot and migrates its mode field.

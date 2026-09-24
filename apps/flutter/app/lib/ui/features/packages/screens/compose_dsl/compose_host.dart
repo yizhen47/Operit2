@@ -9,14 +9,18 @@ class _ComposeHost extends StatefulWidget {
     required this.loading,
     required this.error,
     required this.renderResult,
+    required this.showLoadingIndicator,
     required this.onAction,
     required this.webViewHostContext,
     required this.splitMarkdownContent,
+    this.dialogTitle,
   });
 
   final bool loading;
   final String? error;
   final _ComposeDslRenderResult? renderResult;
+  final bool showLoadingIndicator;
+  final String? dialogTitle;
 
   /// Resolves function for the Compose DSL renderer.
   final Future<Object?> Function(String actionId, [Object? payload]) onAction;
@@ -43,12 +47,37 @@ class _ComposeHostState extends State<_ComposeHost> {
   /// Builds the widget for the current DSL state.
   @override
   Widget build(BuildContext context) {
+    final content = _buildContent(context);
+    final title = widget.dialogTitle;
+    final tree = widget.renderResult?.tree;
+    final rootIsDialog = tree?.type == 'Dialog' || tree?.type == 'AlertDialog';
+    if (title == null ||
+        (!widget.loading && widget.error == null && rootIsDialog)) {
+      return content;
+    }
+    return AlertDialog(
+      title: Text(title),
+      content: SizedBox(width: 620, height: 420, child: content),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(MaterialLocalizations.of(context).closeButtonLabel),
+        ),
+      ],
+    );
+  }
+
+  /// Builds loading, error, and rendered content within the selected surface.
+  Widget _buildContent(BuildContext context) {
     final tree = widget.renderResult?.tree;
     if (!widget.loading && widget.error == null && tree != null) {
       _dispatchRootOnLoad();
     }
-    if (widget.loading) {
+    if (widget.loading && widget.showLoadingIndicator) {
       return const M3LoadingPane();
+    }
+    if (widget.loading) {
+      return const SizedBox.shrink();
     }
     if (widget.error != null) {
       return Center(
@@ -73,6 +102,7 @@ class _ComposeHostState extends State<_ComposeHost> {
       onAction: widget.onAction,
       webViewHostContext: widget.webViewHostContext,
       splitMarkdownContent: widget.splitMarkdownContent,
+      embedDialog: widget.dialogTitle != null,
     );
   }
 

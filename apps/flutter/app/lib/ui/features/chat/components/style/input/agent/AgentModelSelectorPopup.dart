@@ -1660,17 +1660,16 @@ String? _formatContextChip(double? length) {
   if (length == null || length <= 0) {
     return null;
   }
-  if (length >= 1000000) {
-    final millions = length / 1000000;
-    final text = millions == millions.roundToDouble()
-        ? millions.toInt().toString()
-        : millions.toStringAsFixed(1);
-    return '${text}M';
+  final k = length >= 10000 ? length / 1000.0 : length;
+  if (k >= 950) {
+    final millions = k / 1000.0;
+    final millionsRounded = millions.round();
+    if ((millions - millionsRounded).abs() < 0.08) {
+      return '${millionsRounded}M';
+    }
+    return '${millions.toStringAsFixed(1)}M';
   }
-  if (length >= 1000) {
-    return '${(length / 1000).round()}K';
-  }
-  return length.toInt().toString();
+  return '${k.round()}K';
 }
 
 class _SettingsHeaderRow extends StatelessWidget {

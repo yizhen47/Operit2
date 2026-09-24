@@ -221,6 +221,18 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return _methodChannel.invokeMethod<void>('dispatchKeyEvent', eventJson);
   }
 
+  /// Starts or stops compositor capture without suspending page script.
+  Future<void> setCaptureEnabled(bool enabled) async {
+    if (_isDisposed) {
+      return;
+    }
+    await ready;
+    if (_isDisposed) {
+      return;
+    }
+    await _methodChannel.invokeMethod<void>('setCaptureEnabled', enabled);
+  }
+
   /// Captures one compositor frame from the native WebView surface.
   Future<WebviewSurfaceFrame> captureSurfaceFrame() async {
     final result = await _methodChannel.invokeMethod<Object?>(
@@ -1128,6 +1140,7 @@ class _WebviewState extends State<Webview> {
   PointerDeviceKind _pointerKind = PointerDeviceKind.unknown;
 
   MouseCursor _cursor = SystemMouseCursors.basic;
+  bool? _captureEnabled;
 
   WebviewController get _controller => widget.controller;
 
@@ -1142,10 +1155,41 @@ class _WebviewState extends State<Webview> {
     }
 
     _cursorSubscription = _controller._cursor.listen((cursor) {
+      if (!mounted || _cursor == cursor) return;
       setState(() {
         _cursor = cursor;
       });
     });
+  }
+
+  /// Stops capture while this surface is offstage or covered by another view.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _syncCapture();
+  }
+
+  /// Applies a surface-ownership change to compositor capture.
+  @override
+  void didUpdateWidget(Webview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.layoutControlsSurfaceSize !=
+        widget.layoutControlsSurfaceSize) {
+      _syncCapture();
+    }
+  }
+
+  /// Capture runs only for the surface the user can currently see.
+  void _syncCapture() {
+    final enabled =
+        widget.layoutControlsSurfaceSize &&
+        Visibility.of(context) &&
+        TickerMode.of(context);
+    if (_captureEnabled == enabled) {
+      return;
+    }
+    _captureEnabled = enabled;
+    unawaited(_controller.setCaptureEnabled(enabled));
   }
 
   @override

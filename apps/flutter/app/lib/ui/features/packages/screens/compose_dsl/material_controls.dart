@@ -57,6 +57,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
       contentPadding: node.props['contentPadding'],
     );
     return Card(
+      margin: EdgeInsets.zero,
       color: _colorWithAlpha(
         context,
         node.props['containerColor'],
@@ -366,8 +367,8 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
   Widget _iconButton(BuildContext context, String type) {
     final toggle = type.contains('Toggle');
     final checked = _bool(node.props['checked']);
-    final icon = _hasSlot('content')
-        ? _iconButtonSlot('content')
+    final icon = _slotNodes('content', useChildren: true).isNotEmpty
+        ? _iconButtonSlot('content', useChildren: true)
         : Icon(
             _iconData(
               _string(node.props['icon']).isEmpty
@@ -418,29 +419,38 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
           onPressed: onPressed,
           isSelected: toggle ? checked : null,
           selectedIcon: selectedIcon,
+          style: style,
           icon: icon,
         );
     }
   }
 
   ButtonStyle? _iconButtonStyle(String type) {
-    if (type == 'IconButton' || type == 'IconToggleButton') {
-      return null;
-    }
+    final hasExplicitSize =
+        _number(node.props['width']) != null ||
+        _number(node.props['height']) != null;
     final shape = _shapeBorder(
       node.props['shape'],
       defaultBorderRadius: type.contains('Outlined')
           ? BorderRadius.circular(12)
           : null,
     );
-    return shape == null ? null : IconButton.styleFrom(shape: shape);
+    if (!hasExplicitSize && shape == null) {
+      return null;
+    }
+    return IconButton.styleFrom(
+      shape: shape,
+      minimumSize: hasExplicitSize ? Size.zero : null,
+      padding: hasExplicitSize ? EdgeInsets.zero : null,
+      tapTargetSize: hasExplicitSize ? MaterialTapTargetSize.shrinkWrap : null,
+    );
   }
 
   /// Builds icon button slot for the Compose DSL renderer.
-  Widget _iconButtonSlot(String name) => Column(
+  Widget _iconButtonSlot(String name, {bool useChildren = false}) => Column(
     crossAxisAlignment: CrossAxisAlignment.center,
     mainAxisSize: MainAxisSize.min,
-    children: _slotChildren(name),
+    children: _slotChildren(name, useChildren: useChildren),
   );
 
   /// Builds floating action button for the Compose DSL renderer.
@@ -456,6 +466,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
     );
     if (type == 'ExtendedFloatingActionButton') {
       return FloatingActionButton.extended(
+        heroTag: null,
         onPressed: onPressed,
         backgroundColor: backgroundColor,
         foregroundColor: foregroundColor,
@@ -469,6 +480,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
         : Icon(_iconData(_string(node.props['icon'])));
     if (type == 'SmallFloatingActionButton') {
       return FloatingActionButton.small(
+        heroTag: null,
         onPressed: onPressed,
         backgroundColor: backgroundColor,
         foregroundColor: foregroundColor,
@@ -478,6 +490,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
     }
     if (type == 'LargeFloatingActionButton') {
       return FloatingActionButton.large(
+        heroTag: null,
         onPressed: onPressed,
         backgroundColor: backgroundColor,
         foregroundColor: foregroundColor,
@@ -486,6 +499,7 @@ extension _ComposeMaterialControls on _ComposeDslRenderer {
       );
     }
     return FloatingActionButton(
+      heroTag: null,
       onPressed: onPressed,
       backgroundColor: backgroundColor,
       foregroundColor: foregroundColor,

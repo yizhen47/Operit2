@@ -5,8 +5,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path/path.dart' as path;
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
@@ -271,6 +271,15 @@ class WindowsWebViewController extends PlatformWebViewController {
     await _ensureInitialized();
     return WindowsBrowserSurfaceFrame.fromNative(
       await _webviewController.captureSurfaceFrame(),
+    );
+  }
+
+  /// Applies the host color preference after the native WebView is ready.
+  Future<void> setPreferredColorScheme(Brightness brightness) async {
+    await _ensureInitialized();
+    await const MethodChannel('operit/webview_theme').invokeMethod<void>(
+      'setPreferredColorScheme',
+      brightness.name,
     );
   }
 

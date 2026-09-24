@@ -1,5 +1,7 @@
 #[path = "ChatServiceCore.rs"]
 pub mod ChatServiceCore;
+#[path = "CodexOAuthService.rs"]
+pub mod CodexOAuthService;
 #[path = "GitHubOAuthBrokerService.rs"]
 pub mod GitHubOAuthBrokerService;
 #[path = "LocalModelService.rs"]
@@ -33,6 +35,7 @@ pub mod WorkspaceService;
 
 pub mod core;
 
+pub use CodexOAuthService::*;
 pub use GitHubOAuthBrokerService::*;
 pub use LocalModelService::*;
 pub use LocalProviderService::*;

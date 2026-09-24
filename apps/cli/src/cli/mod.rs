@@ -153,6 +153,9 @@ async fn run_cli_root_inner(args: &[String]) -> Result<(), String> {
     let mut core = local_cli_core().await?;
 
     let result = match localArgs[0].as_str() {
+        "model" if localArgs.get(1).map(String::as_str) == Some("codex-login") => {
+            run_codex_login_command(&mut core, &localArgs[2..]).await
+        }
         "model" => run_core_command_and_print(&mut core, &localArgs).await,
         "version" => run_version_core_command(&mut core).await,
         "prefs" => run_core_command_and_print(&mut core, &args).await,
@@ -1501,6 +1504,168 @@ async fn run_core_command_and_print(
     Ok(())
 }
 
+/// Runs ChatGPT Codex login through the browser callback or the device-code flow.
+async fn run_codex_login_command(
+    core: &mut crate::core_proxy::CliCore,
+    args: &[String],
+) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("browser") => run_codex_browser_login(core).await,
+        Some("device") => run_codex_device_login(core).await,
+        _ => Err("usage: operit2 cli model codex-login <browser|device>".to_string()),
+    }
+}
+
+/// Opens the ChatGPT authorization page and completes login on the fixed Codex callback port.
+async fn run_codex_browser_login(core: &mut crate::core_proxy::CliCore) -> Result<(), String> {
+    let start = core
+        .services_codex_o_auth_service()
+        .startBrowserLogin()
+        .await
+        .map_err(core_command_error_message)?;
+    let listeners = bind_codex_callback_listeners()?;
+    println!("Open this ChatGPT authorization URL:\n{}", start.authorizationUrl);
+    open_local_url(&start.authorizationUrl);
+    let callback = wait_for_codex_callback(&listeners)?;
+    let result = core
+        .services_codex_o_auth_service()
+        .completeBrowserLogin(
+            callback.code,
+            callback.state,
+            start.state,
+            start.codeVerifier,
+        )
+        .await
+        .map_err(core_command_error_message)?;
+    println!(
+        "Codex login successful: {} ({})",
+        result.email, result.accountId
+    );
+    Ok(())
+}
+
+/// Prints a device code and waits until the ChatGPT login is approved.
+async fn run_codex_device_login(core: &mut crate::core_proxy::CliCore) -> Result<(), String> {
+    let start = core
+        .services_codex_o_auth_service()
+        .startDeviceLogin()
+        .await
+        .map_err(core_command_error_message)?;
+    println!("Open {} and enter code {}", start.verificationUrl, start.userCode);
+    open_local_url(&start.verificationUrl);
+    let result = core
+        .services_codex_o_auth_service()
+        .completeDeviceLogin(start)
+        .await
+        .map_err(core_command_error_message)?;
+    println!(
+        "Codex login successful: {} ({})",
+        result.email, result.accountId
+    );
+    Ok(())
+}
+
+struct CodexCallbackQuery {
+    code: String,
+    state: String,
+}
+
+/// Listens on both IPv4 and IPv6 localhost because the registered redirect host is `localhost`.
+fn bind_codex_callback_listeners() -> Result<Vec<std::net::TcpListener>, String> {
+    let mut listeners = Vec::new();
+    let mut errors = Vec::new();
+    for address in ["127.0.0.1:1455", "[::1]:1455"] {
+        match std::net::TcpListener::bind(address) {
+            Ok(listener) => {
+                listener.set_nonblocking(true).map_err(|error| {
+                    format!("Codex callback listener could not configure: {error}")
+                })?;
+                listeners.push(listener);
+            }
+            Err(error) => errors.push(format!("{address}: {error}")),
+        }
+    }
+    if listeners.is_empty() {
+        return Err(format!(
+            "Codex callback listener could not start: {}",
+            errors.join("; ")
+        ));
+    }
+    Ok(listeners)
+}
+
+/// Waits up to five minutes for the fixed Codex browser callback.
+fn wait_for_codex_callback(
+    listeners: &[std::net::TcpListener],
+) -> Result<CodexCallbackQuery, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5 * 60);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("Codex authorization callback timed out".to_string());
+        }
+        let mut accepted = None;
+        for listener in listeners {
+            match listener.accept() {
+                Ok(stream) => {
+                    accepted = Some(stream);
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        let Some((mut stream, _)) = accepted else {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            continue;
+        };
+        use std::io::{Read, Write};
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .map_err(|error| error.to_string())?;
+        let mut buffer = [0_u8; 8192];
+        let count = stream.read(&mut buffer).map_err(|error| error.to_string())?;
+        let request = std::str::from_utf8(&buffer[..count]).map_err(|error| error.to_string())?;
+        let target = request
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .ok_or_else(|| "Codex callback request has no target".to_string())?;
+        let url = reqwest::Url::parse(&format!("http://127.0.0.1:1455{target}"))
+            .map_err(|error| error.to_string())?;
+        let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n<!doctype html><html><body>Codex login complete. You can return to Operit.</body></html>";
+        stream.write_all(response.as_bytes()).ok();
+        if url.path() != "/auth/callback" {
+            continue;
+        }
+        let code = url
+            .query_pairs()
+            .find(|(name, _)| name == "code")
+            .map(|(_, value)| value.into_owned())
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "Codex callback did not include an authorization code".to_string())?;
+        let state = url
+            .query_pairs()
+            .find(|(name, _)| name == "state")
+            .map(|(_, value)| value.into_owned())
+            .ok_or_else(|| "Codex callback did not include state".to_string())?;
+        return Ok(CodexCallbackQuery { code, state });
+    }
+}
+
+/// Opens a local authorization URL when the platform browser command is available.
+fn open_local_url(url: &str) {
+    let result = if cfg!(windows) {
+        Command::new("cmd").args(["/C", "start", "", url]).spawn()
+    } else if cfg!(target_os = "macos") {
+        Command::new("open").arg(url).spawn()
+    } else {
+        Command::new("xdg-open").arg(url).spawn()
+    };
+    if result.is_err() {
+        println!("Could not open a browser. Open the URL manually.");
+    }
+}
+
 /// Runs market commands and lets the CLI own its GitHub login callback process.
 async fn run_market_cli_command(
     core: &mut crate::core_proxy::CliCore,
@@ -1708,7 +1873,7 @@ fn print_cli_usage() {
     println!("operit2 cli plugin <help|list|more|load|show|import|enable|disable>");
     println!("operit2 cli mcp <dir|list|show|import|export|remove|enable|disable|start|kill|tools|config|config-set|local-set|meta|meta-set|describe>");
     println!(
-        "operit2 cli link <serve|discover|hello|connect|space|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>"
+        "operit2 cli link <serve|discover|hello|pair-start|pair-finish|connect|space|sessions|session-delete|accepted-sessions|accepted-session-delete|ping|refresh|stream-probe>"
     );
     println!("operit2 cli web <open|close|status|token>");
     println!("operit2 cli shell [--chat <chat-id>] [--character <character-card-name>] [--group-card <character-group-id>] [--group <group-name>]");
@@ -1773,6 +1938,7 @@ fn print_model_usage() {
     println!("operit2 cli model provider-type-list");
     println!("operit2 cli model provider-list");
     println!("operit2 cli model provider-show <provider-id>");
+    println!("operit2 cli model codex-login <browser|device>");
     println!("operit2 cli model provider-create <name> <provider-type-id> <endpoint>");
     println!("operit2 cli model provider-set-key <provider-id> <api-key>");
     println!("operit2 cli model provider-set-endpoint <provider-id> <endpoint>");
@@ -2346,4 +2512,43 @@ fn currentTimeMillis() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock must be after unix epoch")
         .as_millis() as i64
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies CLI errors expose the denied route subject and capability.
+    #[test]
+    fn cli_route_permission_error_keeps_structured_diagnostics() {
+        let error = CoreLinkError::withDetails(
+            "ROUTE_PERMISSION_DENIED",
+            "Space route chatMessagesFlow requires capability chat.read on caller cli-client",
+            operit_link::CoreValue::Map(BTreeMap::from([
+                (
+                    "subject".to_string(),
+                    operit_link::CoreValue::String("caller".to_string()),
+                ),
+                (
+                    "requiredCapability".to_string(),
+                    operit_link::CoreValue::String("chat.read".to_string()),
+                ),
+                (
+                    "callerNodeId".to_string(),
+                    operit_link::CoreValue::String("cli-client".to_string()),
+                ),
+                (
+                    "targetNodeId".to_string(),
+                    operit_link::CoreValue::String("windows-owner".to_string()),
+                ),
+            ])),
+        );
+        let message = core_command_error_message(error);
+        assert!(message.contains("ROUTE_PERMISSION_DENIED"));
+        assert!(message.contains("caller"));
+        assert!(message.contains("chat.read"));
+        assert!(message.contains("cli-client"));
+        assert!(message.contains("windows-owner"));
+    }
 }

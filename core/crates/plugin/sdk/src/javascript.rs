@@ -115,6 +115,9 @@ pub type JsExecutionFuture<T> = Pin<Box<dyn Future<Output = T> + 'static>>;
 
 /// Defines the fixed Rust execution contract required by package JavaScript.
 pub trait JsExecutionHost: crate::js_sdk::JsToolsHost + Send + Sync {
+    /// Returns the current executable tool catalog with parameter schemas.
+    fn get_tool_catalog(&self) -> Result<serde_json::Value, String>;
+
     /// Executes one validated tool call through the embedding application's tool system.
     fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult;
 
@@ -266,6 +269,8 @@ pub struct ToolPkgMainRegistrationCapture {
     pub toolboxUiModules: Vec<String>,
     #[serde(rename = "uiRoutes", default)]
     pub uiRoutes: Vec<String>,
+    #[serde(rename = "chatComposerSlots", default)]
+    pub chatComposerSlots: Vec<String>,
     #[serde(rename = "navigationEntries", default)]
     pub navigationEntries: Vec<String>,
     #[serde(rename = "desktopWidgets", default)]
@@ -308,8 +313,12 @@ pub struct ToolPkgMainRegistrationCapture {
     pub promptEstimateFinalizeHooks: Vec<String>,
     #[serde(rename = "summaryGenerateHooks", default)]
     pub summaryGenerateHooks: Vec<String>,
+    #[serde(rename = "coreCommands", default)]
+    pub coreCommands: Vec<String>,
     #[serde(rename = "aiProviders", default)]
     pub aiProviders: Vec<String>,
+    #[serde(rename = "manifestExtensions", default)]
+    pub manifestExtensions: Vec<String>,
 }
 
 /// Resolves UTF-8 module resources for ToolPkg JavaScript execution contexts.

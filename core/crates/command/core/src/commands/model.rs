@@ -955,6 +955,7 @@ fn function_binding_json(functionType: &FunctionType, binding: &FunctionModelBin
 /// Prints model command usage.
 fn print_model_usage(output: &mut CoreCommandOutput) {
     let lines = [
+        "operit2 model codex-login <browser|device>",
         "operit2 model provider-type-list",
         "operit2 model provider-list",
         "operit2 model provider-show <provider-id>",

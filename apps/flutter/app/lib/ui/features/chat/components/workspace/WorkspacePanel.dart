@@ -11,6 +11,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
+import '../../../../main/layout/SidebarDockController.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitGlassSurface.dart';
@@ -26,9 +27,11 @@ import 'terminal/WorkspaceTerminalSessions.dart';
 class WorkspacePanel extends StatefulWidget {
   const WorkspacePanel({
     super.key,
+    this.sidebarDockController,
     required this.currentChatId,
     required this.hasBoundWorkspace,
     required this.workspacePath,
+    required this.chatCore,
     required this.onListWorkspaceFiles,
     required this.onListWorkspaceBindingDirectories,
     required this.onReadWorkspaceTextFile,
@@ -40,8 +43,10 @@ class WorkspacePanel extends StatefulWidget {
   });
 
   final String? currentChatId;
+  final SidebarDockController? sidebarDockController;
   final bool hasBoundWorkspace;
   final String? workspacePath;
+  final GeneratedChatRuntimeHolderMainCoreProxy chatCore;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
   final Future<List<WorkspaceFileEntry>> Function(String path)
@@ -81,6 +86,15 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     ),
   ];
   int _selectedIndex = 0;
+  final List<WorkspaceTab> _secondaryTabs = <WorkspaceTab>[];
+  final GlobalKey _primaryPaneKey = GlobalKey();
+  final GlobalKey _secondaryPaneKey = GlobalKey();
+  int _secondarySelectedIndex = 0;
+  _WorkspaceSplitAxis? _splitAxis;
+  double _splitRatio = 0.5;
+  bool _secondaryPaneFirst = false;
+  int? _dropHoverPaneIndex;
+  _WorkspaceDropZone? _dropHoverZone;
   int _filesListingRevision = 0;
   int _workspaceTabIdentitySequence = 0;
   List<WorkspaceTerminalSessionInfo> _terminalSessionEntries =
@@ -110,6 +124,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void initState() {
     super.initState();
+    widget.sidebarDockController?.addListener(_handleSidebarDockChanged);
+    _syncDockedPluginTabs();
     unawaited(_browserViewStore.ensureLoaded());
     _browserSessionRegistry.addListener(_handleBrowserSessionRegistryChanged);
     _handleBrowserSessionRegistryChanged();
@@ -135,6 +151,13 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   @override
   void didUpdateWidget(covariant WorkspacePanel oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.sidebarDockController != widget.sidebarDockController) {
+      oldWidget.sidebarDockController?.removeListener(
+        _handleSidebarDockChanged,
+      );
+      widget.sidebarDockController?.addListener(_handleSidebarDockChanged);
+      _syncDockedPluginTabs();
+    }
     _registerWebVisitControls();
     final workspaceBindingChanged =
         oldWidget.currentChatId != widget.currentChatId ||
@@ -150,6 +173,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   @override
   void dispose() {
+    widget.sidebarDockController?.removeListener(_handleSidebarDockChanged);
     _webVisitSessionRegistry.clearControls();
     _browserSessionRegistry.removeListener(
       _handleBrowserSessionRegistryChanged,
@@ -179,10 +203,73 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     super.dispose();
   }
 
+  /// Refreshes peer plugin tabs after a sidebar dock movement.
+  void _handleSidebarDockChanged() {
+    if (!mounted) {
+      return;
+    }
+    setState(_syncDockedPluginTabs);
+  }
+
+  /// Reconciles docked plugin entries with the shared workspace tab list.
+  void _syncDockedPluginTabs() {
+    final controller = widget.sidebarDockController;
+    if (controller == null) {
+      return;
+    }
+    final dockedById = <String, SidebarDockedPluginView>{
+      for (final view in controller.secondaryViews) view.entry.entryId: view,
+    };
+    _tabs.removeWhere(
+      (tab) =>
+          tab.kind == WorkspaceTabKind.plugin &&
+          !dockedById.containsKey(tab.pluginEntryId),
+    );
+    _secondaryTabs.removeWhere(
+      (tab) =>
+          tab.kind == WorkspaceTabKind.plugin &&
+          !dockedById.containsKey(tab.pluginEntryId),
+    );
+    final existingIds = <String>{
+      for (final tab in <WorkspaceTab>[..._tabs, ..._secondaryTabs])
+        if (tab.kind == WorkspaceTabKind.plugin && tab.pluginEntryId != null)
+          tab.pluginEntryId!,
+    };
+    String? addedPluginEntryId;
+    for (final view in controller.secondaryViews) {
+      if (existingIds.contains(view.entry.entryId)) {
+        continue;
+      }
+      _tabs.add(
+        WorkspaceTab(
+          kind: WorkspaceTabKind.plugin,
+          title: view.entry.title,
+          icon: view.entry.icon,
+          closable: false,
+          pluginEntryId: view.entry.entryId,
+          pluginPackageName: view.route.ownerPackageName,
+          pluginUiModuleId: view.route.toolPkgUiModuleId,
+        ),
+      );
+      addedPluginEntryId = view.entry.entryId;
+    }
+    _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
+    _secondarySelectedIndex = _clampSelectedIndex(
+      _secondarySelectedIndex,
+      _secondaryTabs,
+    );
+    if (addedPluginEntryId != null) {
+      _selectedIndex = _tabs.indexWhere(
+        (tab) => tab.pluginEntryId == addedPluginEntryId,
+      );
+    }
+    _collapseEmptyPane();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return OperitGlassSurface(
+    final panel = OperitGlassSurface(
       color: theme.colorScheme.surface,
       layer: OperitGlassSurfaceLayer.panel,
       transparentAlpha: 0.035,
@@ -196,31 +283,395 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
               start: BorderSide(color: theme.colorScheme.outlineVariant),
             ),
           ),
-          child: Column(
-            children: <Widget>[
-              WorkspaceTabStrip(
-                tabs: _tabs,
-                selectedIndex: _selectedIndex,
-                onSelected: _selectTab,
-                onClosed: _closeTab,
-              ),
-              Expanded(
-                child: IndexedStack(
-                  index: _selectedIndex,
-                  children: <Widget>[
-                    for (final tab in _tabs)
-                      KeyedSubtree(
-                        key: ValueKey<String>(_tabIdentity(tab)),
-                        child: _buildTabContent(tab),
-                      ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          child: _buildWorkspaceLayout(),
         ),
       ),
     );
+    return panel;
+  }
+
+  /// Builds the workspace layout with one or two independently tabbed panes.
+  Widget _buildWorkspaceLayout() {
+    if (_splitAxis == null) {
+      return _buildWorkspacePane(0);
+    }
+    final firstPane = _secondaryPaneFirst ? 1 : 0;
+    final secondPane = _secondaryPaneFirst ? 0 : 1;
+    final first = Expanded(
+      flex: (_splitRatio * 1000).round().clamp(200, 800),
+      child: _buildWorkspacePane(firstPane),
+    );
+    final second = Expanded(
+      flex: ((1 - _splitRatio) * 1000).round().clamp(200, 800),
+      child: _buildWorkspacePane(secondPane),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final extent = _splitAxis == _WorkspaceSplitAxis.vertical
+            ? constraints.maxWidth
+            : constraints.maxHeight;
+        final divider = _WorkspacePaneDivider(
+          axis: _splitAxis!,
+          extent: extent,
+          onDelta: (delta, totalExtent) {
+            if (totalExtent <= 0) {
+              return;
+            }
+            setState(() {
+              final change = delta / totalExtent;
+              _splitRatio = (_splitRatio + change).clamp(0.2, 0.8);
+            });
+          },
+        );
+        return _splitAxis == _WorkspaceSplitAxis.vertical
+            ? Row(children: <Widget>[first, divider, second])
+            : Column(children: <Widget>[first, divider, second]);
+      },
+    );
+  }
+
+  /// Builds one pane, including its tab strip, content stack, and drop zones.
+  Widget _buildWorkspacePane(int paneIndex) {
+    final paneTabs = _tabsForPane(paneIndex);
+    final selectedIndex = _selectedIndexForPane(paneIndex);
+    final content = Column(
+      children: <Widget>[
+        WorkspaceTabStrip(
+          tabs: paneTabs,
+          selectedIndex: selectedIndex,
+          onSelected: (index) => _selectTab(index, paneIndex: paneIndex),
+          onClosed: (index) => _closeTab(index, paneIndex: paneIndex),
+        ),
+        Expanded(
+          child: IndexedStack(
+            index: selectedIndex,
+            children: <Widget>[
+              for (final tab in paneTabs)
+                KeyedSubtree(
+                  key: ValueKey<String>('pane-$paneIndex-${_tabIdentity(tab)}'),
+                  child: _buildTabContent(tab, paneIndex: paneIndex),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+    final paneKey = paneIndex == 0 ? _primaryPaneKey : _secondaryPaneKey;
+    return SizedBox.expand(
+      key: paneKey,
+      child: DragTarget<Object>(
+        onWillAcceptWithDetails: (details) =>
+            _canAcceptWorkspaceDrop(details.data),
+        onMove: (details) {
+          final zone = _dropZoneForGlobalOffset(
+            paneKey.currentContext!,
+            details.offset,
+          );
+          if (_dropHoverPaneIndex == paneIndex && _dropHoverZone == zone) {
+            return;
+          }
+          setState(() {
+            _dropHoverPaneIndex = paneIndex;
+            _dropHoverZone = zone;
+          });
+        },
+        onLeave: (data) {
+          if (_dropHoverPaneIndex != paneIndex) {
+            return;
+          }
+          setState(() {
+            _dropHoverPaneIndex = null;
+            _dropHoverZone = null;
+          });
+        },
+        onAcceptWithDetails: (details) {
+          final zone = _dropZoneForGlobalOffset(
+            paneKey.currentContext!,
+            details.offset,
+          );
+          _clearDropHover();
+          _acceptWorkspaceDrop(details.data, paneIndex: paneIndex, zone: zone);
+        },
+        builder: (context, candidateData, rejectedData) {
+          final zone = _dropHoverPaneIndex == paneIndex ? _dropHoverZone : null;
+          return Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              content,
+              if (candidateData.isNotEmpty && zone != null)
+                _buildDropOverlay(context, zone),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  /// Returns whether a plugin or regular tab can enter a workspace pane.
+  bool _canAcceptWorkspaceDrop(Object data) {
+    if (data is SidebarDockDragPayload) {
+      final controller = widget.sidebarDockController;
+      return controller != null &&
+          controller.canMove(data.entryId, SidebarDockLocation.secondary);
+    }
+    if (data is WorkspaceTabDragPayload) {
+      return _containsWorkspaceTab(data.tab);
+    }
+    return false;
+  }
+
+  /// Returns whether a dragged regular tab is currently present in a pane.
+  bool _containsWorkspaceTab(WorkspaceTab tab) {
+    return _tabs.contains(tab) || _secondaryTabs.contains(tab);
+  }
+
+  /// Returns the mutable tab list belonging to a physical pane index.
+  List<WorkspaceTab> _tabsForPane(int paneIndex) {
+    return paneIndex == 1 ? _secondaryTabs : _tabs;
+  }
+
+  /// Returns the selected tab index belonging to a physical pane index.
+  int _selectedIndexForPane(int paneIndex) {
+    final tabs = _tabsForPane(paneIndex);
+    final value = identical(tabs, _tabs)
+        ? _selectedIndex
+        : _secondarySelectedIndex;
+    return _clampSelectedIndex(value, tabs);
+  }
+
+  /// Keeps one selected index valid for a mutable workspace tab list.
+  int _clampSelectedIndex(int value, List<WorkspaceTab> tabs) {
+    if (tabs.isEmpty) {
+      return 0;
+    }
+    return value.clamp(0, tabs.length - 1).toInt();
+  }
+
+  /// Converts a global drag position into one of the five pane drop zones.
+  _WorkspaceDropZone _dropZoneForGlobalOffset(
+    BuildContext paneContext,
+    Offset globalOffset,
+  ) {
+    // Existing splits accept tabs into the hovered group without splitting it.
+    if (_splitAxis != null) {
+      return _WorkspaceDropZone.center;
+    }
+    final renderObject = paneContext.findRenderObject()! as RenderBox;
+    final local = renderObject.globalToLocal(globalOffset);
+    final size = renderObject.size;
+    if (local.dx <= size.width * 0.25) {
+      return _WorkspaceDropZone.left;
+    }
+    if (local.dx >= size.width * 0.75) {
+      return _WorkspaceDropZone.right;
+    }
+    if (local.dy <= size.height * 0.25) {
+      return _WorkspaceDropZone.top;
+    }
+    if (local.dy >= size.height * 0.75) {
+      return _WorkspaceDropZone.bottom;
+    }
+    return _WorkspaceDropZone.center;
+  }
+
+  /// Builds the visible highlight for the currently hovered drop zone.
+  Widget _buildDropOverlay(BuildContext context, _WorkspaceDropZone zone) {
+    final color = Theme.of(context).colorScheme.primary;
+    final decoration = BoxDecoration(
+      color: color.withValues(alpha: 0.14),
+      border: Border.all(color: color, width: 2),
+    );
+    if (zone == _WorkspaceDropZone.center) {
+      return IgnorePointer(child: DecoratedBox(decoration: decoration));
+    }
+    final horizontal =
+        zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.right;
+    final alignment = switch (zone) {
+      _WorkspaceDropZone.left => Alignment.centerLeft,
+      _WorkspaceDropZone.right => Alignment.centerRight,
+      _WorkspaceDropZone.top => Alignment.topCenter,
+      _WorkspaceDropZone.bottom => Alignment.bottomCenter,
+      _WorkspaceDropZone.center => Alignment.center,
+    };
+    return IgnorePointer(
+      child: Align(
+        alignment: alignment,
+        child: FractionallySizedBox(
+          widthFactor: horizontal ? 0.5 : 1,
+          heightFactor: horizontal ? 1 : 0.5,
+          child: DecoratedBox(decoration: decoration),
+        ),
+      ),
+    );
+  }
+
+  /// Clears any active workspace drop-zone highlight.
+  void _clearDropHover() {
+    if (_dropHoverPaneIndex == null && _dropHoverZone == null) {
+      return;
+    }
+    setState(() {
+      _dropHoverPaneIndex = null;
+      _dropHoverZone = null;
+    });
+  }
+
+  /// Accepts a plugin or regular tab drop into a pane or directional split.
+  void _acceptWorkspaceDrop(
+    Object data, {
+    required int paneIndex,
+    required _WorkspaceDropZone zone,
+  }) {
+    if (data is WorkspaceTabDragPayload) {
+      _moveWorkspaceTabToPane(data.tab, paneIndex: paneIndex, zone: zone);
+      return;
+    }
+    if (data is! SidebarDockDragPayload) {
+      return;
+    }
+    _acceptPluginDrop(data, paneIndex: paneIndex, zone: zone);
+  }
+
+  /// Accepts a plugin drop into a pane or creates a directional split.
+  void _acceptPluginDrop(
+    SidebarDockDragPayload payload, {
+    required int paneIndex,
+    required _WorkspaceDropZone zone,
+  }) {
+    final controller = widget.sidebarDockController;
+    if (controller == null ||
+        !controller.canMove(payload.entryId, SidebarDockLocation.secondary)) {
+      return;
+    }
+    final alreadySecondary = controller.secondaryViews.any(
+      (view) => view.entry.entryId == payload.entryId,
+    );
+    if (!alreadySecondary) {
+      controller.move(
+        payload.entryId,
+        location: SidebarDockLocation.secondary,
+        insertionIndex: controller.secondaryViews.length,
+      );
+    }
+    final view = controller.secondaryViews.firstWhere(
+      (item) => item.entry.entryId == payload.entryId,
+    );
+    final pluginTab = WorkspaceTab(
+      kind: WorkspaceTabKind.plugin,
+      title: view.entry.title,
+      icon: view.entry.icon,
+      closable: false,
+      pluginEntryId: view.entry.entryId,
+      pluginPackageName: view.route.ownerPackageName,
+      pluginUiModuleId: view.route.toolPkgUiModuleId,
+    );
+    setState(() {
+      _removePluginFromPanes(payload.entryId);
+      if (_splitAxis == null && zone != _WorkspaceDropZone.center) {
+        _splitAxis =
+            zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.right
+            ? _WorkspaceSplitAxis.vertical
+            : _WorkspaceSplitAxis.horizontal;
+        _secondaryPaneFirst =
+            zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.top;
+        _secondaryTabs.add(pluginTab);
+        _secondarySelectedIndex = 0;
+        _splitRatio = 0.5;
+        return;
+      }
+      final targetTabs = _tabsForPane(paneIndex);
+      final targetIndex = targetTabs.indexWhere(
+        (tab) => tab.pluginEntryId == payload.entryId,
+      );
+      if (targetIndex >= 0) {
+        targetTabs[targetIndex] = pluginTab;
+        _setSelectedIndexForPane(paneIndex, targetIndex);
+      } else {
+        targetTabs.add(pluginTab);
+        _setSelectedIndexForPane(paneIndex, targetTabs.length - 1);
+      }
+      _collapseEmptyPane();
+    });
+  }
+
+  /// Removes an empty secondary group after a completed tab mutation.
+  void _collapseEmptyPane() {
+    if (_secondaryTabs.isNotEmpty) {
+      return;
+    }
+    _splitAxis = null;
+    _secondaryPaneFirst = false;
+    _splitRatio = 0.5;
+    _secondarySelectedIndex = 0;
+    _dropHoverPaneIndex = null;
+    _dropHoverZone = null;
+  }
+
+  /// Moves a regular workspace tab into a pane or creates a directional split.
+  void _moveWorkspaceTabToPane(
+    WorkspaceTab tab, {
+    required int paneIndex,
+    required _WorkspaceDropZone zone,
+  }) {
+    final sourceTabs = _tabs.contains(tab)
+        ? _tabs
+        : (_secondaryTabs.contains(tab) ? _secondaryTabs : null);
+    if (sourceTabs == null) {
+      return;
+    }
+    setState(() {
+      if (_splitAxis == null && zone != _WorkspaceDropZone.center) {
+        if (identical(sourceTabs, _tabs)) {
+          _tabs.remove(tab);
+        }
+        _splitAxis =
+            zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.right
+            ? _WorkspaceSplitAxis.vertical
+            : _WorkspaceSplitAxis.horizontal;
+        _secondaryPaneFirst =
+            zone == _WorkspaceDropZone.left || zone == _WorkspaceDropZone.top;
+        _secondaryTabs
+          ..clear()
+          ..add(tab);
+        _secondarySelectedIndex = 0;
+        _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
+        _splitRatio = 0.5;
+        return;
+      }
+      sourceTabs.remove(tab);
+      final targetTabs = _tabsForPane(paneIndex);
+      targetTabs.remove(tab);
+      targetTabs.add(tab);
+      _setSelectedIndexForPane(paneIndex, targetTabs.length - 1);
+      _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
+      _secondarySelectedIndex = _clampSelectedIndex(
+        _secondarySelectedIndex,
+        _secondaryTabs,
+      );
+      _collapseEmptyPane();
+    });
+  }
+
+  /// Removes one plugin tab from both pane lists and keeps their selection valid.
+  void _removePluginFromPanes(String entryId) {
+    _tabs.removeWhere((tab) => tab.pluginEntryId == entryId);
+    _secondaryTabs.removeWhere((tab) => tab.pluginEntryId == entryId);
+    _selectedIndex = _clampSelectedIndex(_selectedIndex, _tabs);
+    _secondarySelectedIndex = _clampSelectedIndex(
+      _secondarySelectedIndex,
+      _secondaryTabs,
+    );
+  }
+
+  /// Updates the selected index belonging to a physical pane.
+  void _setSelectedIndexForPane(int paneIndex, int index) {
+    final tabs = _tabsForPane(paneIndex);
+    final value = _clampSelectedIndex(index, tabs);
+    if (identical(tabs, _tabs)) {
+      _selectedIndex = value;
+    } else {
+      _secondarySelectedIndex = value;
+    }
   }
 
   void _registerWebVisitControls() {
@@ -229,7 +680,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Watches chat histories used by the workspace overview.
   void _watchWorkspaceOverviewHistories() {
-    _workspaceOverviewHistorySubscription = _coreClients.chatRuntimeHolderMain
+    _workspaceOverviewHistorySubscription = widget.chatCore
         .chatHistoryListItemsFlow()
         .listen(
           (histories) {
@@ -597,9 +1048,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
-  void _selectTab(int index) {
+  /// Selects a tab in the requested physical workspace pane.
+  void _selectTab(int index, {int paneIndex = 0}) {
     setState(() {
-      _selectedIndex = index;
+      _setSelectedIndexForPane(paneIndex, index);
     });
   }
 
@@ -709,7 +1161,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     return 'visit_web';
   }
 
-  Widget _buildTabContent(WorkspaceTab tab) {
+  /// Builds one tab's content with callbacks bound to its physical pane.
+  Widget _buildTabContent(WorkspaceTab tab, {int paneIndex = 0}) {
     return WorkspaceTabContent(
       tab: tab,
       workspacePath: widget.workspacePath,
@@ -731,14 +1184,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onOpenTerminalSessions: _showTerminalSessionPicker,
       onOpenBrowserSessions: _showBrowserSessionPicker,
       onOpenBrowser: _openBrowserTab,
-      onFinishWebVisit: _finishWebVisitTab,
-      onActivateCurrentTab: () => _selectWorkspaceTab(tab),
-      onCloseCurrentTab: () => _closeWorkspaceTab(tab),
+      onFinishWebVisit: (tab, response) =>
+          _finishWebVisitTab(tab, response, paneIndex: paneIndex),
+      onActivateCurrentTab: () =>
+          _selectWorkspaceTab(tab, paneIndex: paneIndex),
+      onCloseCurrentTab: () => _closeWorkspaceTab(tab, paneIndex: paneIndex),
       onOpenWorkspaceCreator: _showCreateWorkspaceDialog,
       onBindWorkspace: _bindWorkspaceFolder,
       onChooseExistingWorkspace: _openWorkspaceBindingPickerTab,
-      splitMarkdownContent: (content) => _coreClients.chatRuntimeHolderMain
-          .splitMarkdownContent(content: content),
+      splitMarkdownContent: (content) =>
+          widget.chatCore.splitMarkdownContent(content: content),
     );
   }
 
@@ -1087,10 +1542,22 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     _browserSessionCount.value = _browserSessionRegistry.sessions.length;
   }
 
+  /// Removes closed terminal sessions from both tab groups.
   void _removeTerminalTabsForSession(String sessionId) {
     final selectedTab = _tabs[_selectedIndex];
     setState(() {
       _tabs.removeWhere((tab) => tab.terminalSessionId == sessionId);
+      final secondarySelected = _secondaryTabs.isEmpty
+          ? null
+          : _secondaryTabs[_secondarySelectedIndex];
+      _secondaryTabs.removeWhere((tab) => tab.terminalSessionId == sessionId);
+      _secondarySelectedIndex = _clampSelectedIndex(
+        secondarySelected == null
+            ? 0
+            : _secondaryTabs.indexOf(secondarySelected),
+        _secondaryTabs,
+      );
+      _collapseEmptyPane();
       final preservedIndex = _tabs.indexOf(selectedTab);
       if (preservedIndex >= 0) {
         _selectedIndex = preservedIndex;
@@ -1138,107 +1605,11 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
 
   /// Shows the workspace creation dialog without opening a setup tab.
   void _showCreateWorkspaceDialog() {
-    final nameController = TextEditingController();
-    var dialogBusy = false;
-    String? dialogError;
-    final dialogFuture = showDialog<void>(
+    showDialog<void>(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            final l10n = AppLocalizations.of(context)!;
-            Future<void> submitCreateWorkspace() async {
-              if (dialogBusy) {
-                return;
-              }
-              final name = nameController.text.trim();
-              if (name.isEmpty) {
-                setDialogState(() {
-                  dialogError = l10n.workspaceNameHint;
-                });
-                return;
-              }
-              setDialogState(() {
-                dialogBusy = true;
-                dialogError = null;
-              });
-              try {
-                await _createWorkspace(name);
-                if (dialogContext.mounted) {
-                  Navigator.of(dialogContext).pop();
-                }
-              } catch (error, stackTrace) {
-                debugPrint('Workspace creation failed: $error\n$stackTrace');
-                if (dialogContext.mounted) {
-                  setDialogState(() {
-                    dialogError = error.toString();
-                  });
-                }
-              } finally {
-                if (dialogContext.mounted) {
-                  setDialogState(() {
-                    dialogBusy = false;
-                  });
-                }
-              }
-            }
-
-            return AlertDialog(
-              title: Text(l10n.workspaceCreateTitle),
-              content: SizedBox(
-                width: 420,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      TextField(
-                        controller: nameController,
-                        autofocus: true,
-                        enabled: !dialogBusy,
-                        decoration: InputDecoration(
-                          labelText: l10n.workspaceNameLabel,
-                          hintText: l10n.workspaceNameHint,
-                        ),
-                      ),
-                      if (dialogError != null) ...<Widget>[
-                        const SizedBox(height: 10),
-                        Text(
-                          dialogError!,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 14),
-                    ],
-                  ),
-                ),
-              ),
-              actions: <Widget>[
-                TextButton(
-                  onPressed: dialogBusy
-                      ? null
-                      : () {
-                          Navigator.of(dialogContext).pop();
-                        },
-                  child: Text(l10n.cancel),
-                ),
-                FilledButton(
-                  onPressed: dialogBusy
-                      ? null
-                      : () {
-                          unawaited(submitCreateWorkspace());
-                        },
-                  child: Text(l10n.bind),
-                ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (context) =>
+          _CreateWorkspaceDialog(onCreateWorkspace: _createWorkspace),
     );
-    unawaited(dialogFuture.whenComplete(nameController.dispose));
   }
 
   /// Opens the file tree for one mounted workspace folder.
@@ -1314,9 +1685,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     final selectedWasTarget =
         selectedTab.kind == WorkspaceTabKind.workspacePicker;
     setState(() {
-      _tabs.removeWhere(
-        (tab) => tab.kind == WorkspaceTabKind.workspacePicker,
-      );
+      _tabs.removeWhere((tab) => tab.kind == WorkspaceTabKind.workspacePicker);
       var filesIndex = _tabs.indexWhere(
         (tab) => tab.kind == WorkspaceTabKind.files,
       );
@@ -1351,24 +1720,45 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       tab.workspaceHtmlPath ?? '',
       tab.webVisitRequest?.requestId ?? '',
       tab.terminalSessionId ?? '',
+      tab.pluginEntryId ?? '',
+      tab.pluginPackageName ?? '',
+      tab.pluginUiModuleId ?? '',
       tab.identityToken,
       tab.title,
     ].join('|');
   }
 
-  void _closeTab(int index) {
-    if (index <= 0 || index >= _tabs.length) {
+  /// Closes one tab from the requested physical workspace pane.
+  void _closeTab(int index, {int paneIndex = 0}) {
+    final tabs = _tabsForPane(paneIndex);
+    if (index < 0 || index >= tabs.length) {
       return;
     }
-    final tab = _tabs[index];
+    final tab = tabs[index];
+    if (!tab.closable) {
+      return;
+    }
     setState(() {
-      _tabs.removeAt(index);
-      if (_selectedIndex == index) {
-        _selectedIndex = (index - 1).clamp(0, _tabs.length - 1);
-      } else if (_selectedIndex > index) {
-        _selectedIndex -= 1;
+      final selectedIndex = _selectedIndexForPane(paneIndex);
+      tabs.removeAt(index);
+      if (selectedIndex == index) {
+        _setSelectedIndexForPane(paneIndex, index - 1);
+      } else if (selectedIndex > index) {
+        _setSelectedIndexForPane(paneIndex, selectedIndex - 1);
       }
+      _collapseEmptyPane();
     });
+    if (tab.kind == WorkspaceTabKind.plugin) {
+      final entryId = tab.pluginEntryId;
+      final controller = widget.sidebarDockController;
+      if (entryId != null && controller != null) {
+        controller.move(
+          entryId,
+          location: SidebarDockLocation.primary,
+          insertionIndex: controller.primaryEntries.length,
+        );
+      }
+    }
     if (tab.kind == WorkspaceTabKind.terminal) {
       final sessionId = tab.terminalSessionId;
       if (sessionId != null && sessionId.trim().isNotEmpty) {
@@ -1390,39 +1780,51 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     }
   }
 
-  void _selectWorkspaceTab(WorkspaceTab tab) {
-    final index = _tabs.indexOf(tab);
+  /// Selects a tab after a content widget requests activation.
+  void _selectWorkspaceTab(WorkspaceTab tab, {int paneIndex = 0}) {
+    final tabs = _tabsForPane(paneIndex);
+    final index = tabs.indexOf(tab);
     if (index < 0) {
       return;
     }
     setState(() {
-      _selectedIndex = index;
+      _setSelectedIndexForPane(paneIndex, index);
     });
   }
 
-  void _closeWorkspaceTab(WorkspaceTab tab) {
-    final index = _tabs.indexOf(tab);
-    if (index <= 0) {
+  /// Closes a tab after its content widget requests closure.
+  void _closeWorkspaceTab(WorkspaceTab tab, {int paneIndex = 0}) {
+    final tabs = _tabsForPane(paneIndex);
+    final index = tabs.indexOf(tab);
+    if (index < 0) {
       return;
     }
-    _closeTab(index);
+    _closeTab(index, paneIndex: paneIndex);
   }
 
-  void _finishWebVisitTab(WorkspaceTab tab, WebVisitResponse response) {
+  /// Completes a web visit and removes its tab from the owning pane.
+  void _finishWebVisitTab(
+    WorkspaceTab tab,
+    WebVisitResponse response, {
+    int paneIndex = 0,
+  }) {
     final request = tab.webVisitRequest;
     if (request == null) {
       return;
     }
     _completeWebVisitRequest(request.requestId, response);
-    final index = _tabs.indexOf(tab);
-    if (index > 0) {
+    final tabs = _tabsForPane(paneIndex);
+    final index = tabs.indexOf(tab);
+    if (index >= 0) {
       setState(() {
-        _tabs.removeAt(index);
-        if (_selectedIndex == index) {
-          _selectedIndex = (index - 1).clamp(0, _tabs.length - 1);
-        } else if (_selectedIndex > index) {
-          _selectedIndex -= 1;
+        final selectedIndex = _selectedIndexForPane(paneIndex);
+        tabs.removeAt(index);
+        if (selectedIndex == index) {
+          _setSelectedIndexForPane(paneIndex, index - 1);
+        } else if (selectedIndex > index) {
+          _setSelectedIndexForPane(paneIndex, selectedIndex - 1);
         }
+        _collapseEmptyPane();
       });
     }
   }
@@ -1474,5 +1876,170 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         _selectedIndex = _tabs.length - 1;
       }
     });
+  }
+}
+
+enum _WorkspaceSplitAxis { horizontal, vertical }
+
+enum _WorkspaceDropZone { center, left, right, top, bottom }
+
+/// Renders and handles the draggable divider between workspace panes.
+class _WorkspacePaneDivider extends StatelessWidget {
+  const _WorkspacePaneDivider({
+    required this.axis,
+    required this.extent,
+    required this.onDelta,
+  });
+
+  final _WorkspaceSplitAxis axis;
+  final double extent;
+  final void Function(double delta, double extent) onDelta;
+
+  /// Builds a resize handle with the cursor matching its orientation.
+  @override
+  Widget build(BuildContext context) {
+    final vertical = axis == _WorkspaceSplitAxis.vertical;
+    final color = Theme.of(context).colorScheme.outlineVariant;
+    return MouseRegion(
+      cursor: vertical
+          ? SystemMouseCursors.resizeColumn
+          : SystemMouseCursors.resizeRow,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragUpdate: vertical
+            ? (details) => onDelta(details.delta.dx, extent)
+            : null,
+        onVerticalDragUpdate: vertical
+            ? null
+            : (details) => onDelta(details.delta.dy, extent),
+        child: SizedBox(
+          width: vertical ? 9 : double.infinity,
+          height: vertical ? double.infinity : 9,
+          child: Center(
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: color.withValues(alpha: 0.7)),
+              child: SizedBox(
+                width: vertical ? 1 : double.infinity,
+                height: vertical ? double.infinity : 1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Displays the workspace creation form and owns its text controller.
+class _CreateWorkspaceDialog extends StatefulWidget {
+  const _CreateWorkspaceDialog({required this.onCreateWorkspace});
+
+  final Future<void> Function(String name) onCreateWorkspace;
+
+  /// Creates the state that owns the workspace creation form.
+  @override
+  State<_CreateWorkspaceDialog> createState() => _CreateWorkspaceDialogState();
+}
+
+/// Manages the workspace creation form lifecycle.
+class _CreateWorkspaceDialogState extends State<_CreateWorkspaceDialog> {
+  final TextEditingController _nameController = TextEditingController();
+  bool _dialogBusy = false;
+  String? _dialogError;
+
+  /// Submits the workspace name and closes the dialog after creation.
+  Future<void> _submitCreateWorkspace() async {
+    if (_dialogBusy) {
+      return;
+    }
+    final l10n = AppLocalizations.of(context)!;
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      setState(() {
+        _dialogError = l10n.workspaceNameHint;
+      });
+      return;
+    }
+    setState(() {
+      _dialogBusy = true;
+      _dialogError = null;
+    });
+    try {
+      await widget.onCreateWorkspace(name);
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (error, stackTrace) {
+      debugPrint('Workspace creation failed: $error\n$stackTrace');
+      if (mounted) {
+        setState(() {
+          _dialogError = error.toString();
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _dialogBusy = false;
+        });
+      }
+    }
+  }
+
+  /// Releases the controller owned by the dialog state.
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  /// Builds the workspace creation form.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return AlertDialog(
+      title: Text(l10n.workspaceCreateTitle),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              TextField(
+                controller: _nameController,
+                autofocus: true,
+                enabled: !_dialogBusy,
+                decoration: InputDecoration(
+                  labelText: l10n.workspaceNameLabel,
+                  hintText: l10n.workspaceNameHint,
+                ),
+              ),
+              if (_dialogError != null) ...<Widget>[
+                const SizedBox(height: 10),
+                Text(
+                  _dialogError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+              ],
+              const SizedBox(height: 14),
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: _dialogBusy ? null : () => Navigator.of(context).pop(),
+          child: Text(l10n.cancel),
+        ),
+        FilledButton(
+          onPressed: _dialogBusy
+              ? null
+              : () {
+                  unawaited(_submitCreateWorkspace());
+                },
+          child: Text(l10n.bind),
+        ),
+      ],
+    );
   }
 }

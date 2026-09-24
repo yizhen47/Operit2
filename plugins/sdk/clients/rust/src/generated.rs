@@ -244,6 +244,21 @@ pub struct SdkToolPkgAppLifecycleHookRuntime {
     pub functionSource: Option<String>,
 }
 
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgChatComposerSlotRuntime`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgChatComposerSlotRuntime {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "slot")]
+    pub slot: String,
+    #[serde(rename = "screen")]
+    pub screen: String,
+    #[serde(rename = "order")]
+    pub order: i32,
+    #[serde(rename = "keepAlive")]
+    pub keepAlive: bool,
+}
+
 /// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgChatMessageMenuDialogRuntime`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SdkToolPkgChatMessageMenuDialogRuntime {
@@ -289,6 +304,10 @@ pub struct SdkToolPkgContainerRuntime {
     pub apiVersion: String,
     #[serde(rename = "requires")]
     pub requires: Vec<SdkToolPkgManifestRequirement>,
+    #[serde(rename = "dependencyIssues")]
+    pub dependencyIssues: Vec<SdkToolPkgDependencyIssue>,
+    #[serde(rename = "manifestExtensions")]
+    pub manifestExtensions: std::collections::BTreeMap<String, operit_link::CoreValue>,
     #[serde(rename = "author")]
     pub author: Vec<String>,
     #[serde(rename = "mainEntry")]
@@ -311,6 +330,8 @@ pub struct SdkToolPkgContainerRuntime {
     pub uiModules: Vec<SdkToolPkgUiModuleRuntime>,
     #[serde(rename = "uiRoutes")]
     pub uiRoutes: Vec<SdkToolPkgUiRouteRuntime>,
+    #[serde(rename = "chatComposerSlots")]
+    pub chatComposerSlots: Vec<SdkToolPkgChatComposerSlotRuntime>,
     #[serde(rename = "navigationEntries")]
     pub navigationEntries: Vec<SdkToolPkgNavigationEntryRuntime>,
     #[serde(rename = "desktopWidgets")]
@@ -353,12 +374,52 @@ pub struct SdkToolPkgContainerRuntime {
     pub promptEstimateFinalizeHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "summaryGenerateHooks")]
     pub summaryGenerateHooks: Vec<SdkToolPkgFunctionHookRuntime>,
+    #[serde(rename = "coreCommands")]
+    pub coreCommands: Vec<SdkToolPkgCoreCommandRuntime>,
     #[serde(rename = "aiProviders")]
     pub aiProviders: Vec<SdkToolPkgAiProviderRuntime>,
+    #[serde(rename = "manifestExtensionHandlers")]
+    pub manifestExtensionHandlers: Vec<SdkToolPkgRegisteredManifestExtension>,
     #[serde(rename = "logoResource")]
     pub logoResource: Option<SdkToolPkgResourceRuntime>,
     #[serde(rename = "marketOrigin")]
     pub marketOrigin: Option<SdkToolPkgMarketOrigin>,
+}
+
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgCoreCommandRuntime`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgCoreCommandRuntime {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "title")]
+    pub title: SdkLocalizedText,
+    #[serde(rename = "description")]
+    pub description: SdkLocalizedText,
+    #[serde(rename = "usage")]
+    pub usage: String,
+    #[serde(rename = "function")]
+    pub function: String,
+    #[serde(rename = "functionSource")]
+    pub functionSource: Option<String>,
+}
+
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgDependencyIssue`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgDependencyIssue {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "requiredMinVersion")]
+    pub requiredMinVersion: Option<String>,
+    #[serde(rename = "requiredMaxVersion")]
+    pub requiredMaxVersion: Option<String>,
+    #[serde(rename = "installedVersion")]
+    pub installedVersion: Option<String>,
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
 }
 
 /// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgDesktopWidgetRuntime`.
@@ -462,6 +523,17 @@ pub struct SdkToolPkgNavigationEntryRuntime {
     pub icon: Option<String>,
     #[serde(rename = "order")]
     pub order: i32,
+}
+
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgRegisteredManifestExtension`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgRegisteredManifestExtension {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "function")]
+    pub function: String,
+    #[serde(rename = "functionSource")]
+    pub functionSource: Option<String>,
 }
 
 /// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgResourceRuntime`.
@@ -644,6 +716,23 @@ pub struct SdkPluginLoadingProgress {
     pub plugins: Vec<SdkPluginLoadingItem>,
 }
 
+/// Generated SDK model for `operit_tools::tools::packTool::RuntimePackageManager::ToolPkgLoadIssue`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgLoadIssue {
+    #[serde(rename = "sourcePath")]
+    pub sourcePath: String,
+    #[serde(rename = "packageName")]
+    pub packageName: Option<String>,
+    #[serde(rename = "displayName")]
+    pub displayName: String,
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "packageKind")]
+    pub packageKind: String,
+}
+
 /// Generated client for Core object `application`.
 #[derive(Clone)]
 pub struct OperitApplicationClient { client: PluginSdkClient }
@@ -669,112 +758,133 @@ impl OperitApplicationPackageManagerClient {
     /// Calls `activatePackage` through the Core Link route.
     pub async fn activatePackage(&self, packageName: &str) -> Result<bool, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "activatePackage", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "activatePackage", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `isPackageActivated` through the Core Link route.
     pub async fn isPackageActivated(&self, packageName: &str) -> Result<bool, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "isPackageActivated", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "isPackageActivated", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `usePackage` through the Core Link route.
     pub async fn usePackage(&self, packageName: &str) -> Result<String, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "usePackage", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "usePackage", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `executeUsePackageTool` through the Core Link route.
     pub async fn executeUsePackageTool(&self, toolName: &str, packageName: &str) -> Result<SdkToolResult, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("toolName".to_string(), operit_link::toCoreValue(&toolName).map_err(|error| CoreLinkError::internal(error.to_string()))?), ("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "executeUsePackageTool", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "executeUsePackageTool", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getEnabledPackageNames` through the Core Link route.
     pub async fn getEnabledPackageNames(&self) -> Result<Vec<String>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getEnabledPackageNames", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getEnabledPackageNames", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `isPackageEnabled` through the Core Link route.
     pub async fn isPackageEnabled(&self, packageName: &str) -> Result<bool, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "isPackageEnabled", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "isPackageEnabled", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getActivePackageNames` through the Core Link route.
     pub async fn getActivePackageNames(&self) -> Result<Vec<String>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getActivePackageNames", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getActivePackageNames", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `enablePackage` through the Core Link route.
     pub async fn enablePackage(&self, packageName: &str) -> Result<String, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "enablePackage", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "enablePackage", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `disablePackage` through the Core Link route.
     pub async fn disablePackage(&self, packageName: &str) -> Result<String, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "disablePackage", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "disablePackage", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getToolPkgPluginContainerDetails` through the Core Link route.
     pub async fn getToolPkgPluginContainerDetails(&self, useEnglish: bool) -> Result<Vec<SdkToolPkgContainerDetails>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("useEnglish".to_string(), operit_link::toCoreValue(&useEnglish).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getToolPkgPluginContainerDetails", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getToolPkgPluginContainerDetails", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getToolPkgContainerRuntimes` through the Core Link route.
     pub async fn getToolPkgContainerRuntimes(&self) -> Result<Vec<SdkToolPkgContainerRuntime>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getToolPkgContainerRuntimes", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getToolPkgContainerRuntimes", args)).await;
+        let value = response.result?;
+        decode_messagepack_value(&value)
+    }
+    /// Calls `getToolPkgContainerOrder` through the Core Link route.
+    pub async fn getToolPkgContainerOrder(&self) -> Result<Vec<String>, CoreLinkError> {
+        let args = CoreValue::Map(std::collections::BTreeMap::from([]));
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getToolPkgContainerOrder", args)).await;
+        let value = response.result?;
+        decode_messagepack_value(&value)
+    }
+    /// Calls `setToolPkgContainerOrder` through the Core Link route.
+    pub async fn setToolPkgContainerOrder(&self, packageNames: Vec<String>) -> Result<(), CoreLinkError> {
+        let args = CoreValue::Map(std::collections::BTreeMap::from([("packageNames".to_string(), operit_link::toCoreValue(&packageNames).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "setToolPkgContainerOrder", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getToolPkgContainerDetails` through the Core Link route.
     pub async fn getToolPkgContainerDetails(&self, packageName: &str, useEnglish: bool) -> Result<Option<SdkToolPkgContainerDetails>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?), ("useEnglish".to_string(), operit_link::toCoreValue(&useEnglish).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getToolPkgContainerDetails", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getToolPkgContainerDetails", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `readToolPkgLogoBytes` through the Core Link route.
     pub async fn readToolPkgLogoBytes(&self, packageName: &str) -> Result<Option<SdkToolPkgLogoBytes>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "readToolPkgLogoBytes", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "readToolPkgLogoBytes", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getEffectivePackageTools` through the Core Link route.
     pub async fn getEffectivePackageTools(&self, packageName: &str) -> Result<Option<SdkToolPackage>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getEffectivePackageTools", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getEffectivePackageTools", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getPackageTools` through the Core Link route.
     pub async fn getPackageTools(&self, packageName: &str) -> Result<Option<SdkToolPackage>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([("packageName".to_string(), operit_link::toCoreValue(&packageName).map_err(|error| CoreLinkError::internal(error.to_string()))?)]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getPackageTools", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getPackageTools", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }
     /// Calls `getAvailablePackages` through the Core Link route.
     pub async fn getAvailablePackages(&self) -> Result<std::collections::BTreeMap<String, SdkToolPackage>, CoreLinkError> {
         let args = CoreValue::Map(std::collections::BTreeMap::from([]));
-        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 4, "getAvailablePackages", args)).await;
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getAvailablePackages", args)).await;
+        let value = response.result?;
+        decode_messagepack_value(&value)
+    }
+    /// Calls `getToolPkgLoadIssues` through the Core Link route.
+    pub async fn getToolPkgLoadIssues(&self) -> Result<Vec<SdkToolPkgLoadIssue>, CoreLinkError> {
+        let args = CoreValue::Map(std::collections::BTreeMap::from([]));
+        let response = self.client.call(operit_link::CoreCallRequest::new(self.client.nextRequestId()?, 5, "getToolPkgLoadIssues", args)).await;
         let value = response.result?;
         decode_messagepack_value(&value)
     }

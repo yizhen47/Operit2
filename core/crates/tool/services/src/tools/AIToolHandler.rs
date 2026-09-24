@@ -29,6 +29,7 @@ use operit_util::ChainLogger::{self, TOOL_CHAIN};
 use operit_util::LocaleUtils::LocaleUtils;
 use operit_util::OperitPaths;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::runtime_support::{ToolRuntimeDependencies, ToolRuntimeSupport};
 
@@ -669,6 +670,8 @@ impl AIToolHandler {
         accessSpec: ToolAccessSpec,
     ) -> Result<ToolAccessSpec, ToolResult> {
         let permissionSystem = self.getToolPermissionSystem();
+        let chatId = ToolExecutionManager::currentToolRuntimeContext()
+            .and_then(|context| context.callerChatId);
         let mode = permissionSystem
             .getAiPermissionMode()
             .map_err(|error| ToolResult {
@@ -697,7 +700,7 @@ impl AIToolHandler {
         };
         let policyOverrideApproved = if let Some(reason) = policyOverrideReason.as_deref() {
             let approved = permissionSystem
-                .checkSandboxEscapeApprovalAsync(tool)
+                .checkSandboxEscapeApprovalAsync(tool, chatId.clone())
                 .await
                 .map_err(|error| ToolResult {
                     toolName: tool.name.clone(),
@@ -727,7 +730,7 @@ impl AIToolHandler {
             && !policyOverrideApproved
         {
             let approved = permissionSystem
-                .checkSandboxEscapeApprovalAsync(tool)
+                .checkSandboxEscapeApprovalAsync(tool, chatId.clone())
                 .await
                 .map_err(|error| ToolResult {
                     toolName: tool.name.clone(),
@@ -1200,6 +1203,86 @@ impl AIToolHandlerState {
 }
 
 impl JsExecutionHost for AIToolHandler {
+    /// Returns executable built-in and package tools with their declared parameters.
+    fn get_tool_catalog(&self) -> Result<Value, String> {
+        let mut handler = self.clone();
+        handler.registerDefaultTools();
+        let language = self.package_language()?;
+        let useEnglish = language.to_ascii_lowercase().starts_with("en");
+        let hostEnvironment = self.getHostEnvironmentDescriptor();
+        let categories = self
+            .runtimeSupport()
+            .buildBuiltinAndInternalCategories(useEnglish, &hostEnvironment);
+        let mut tools = Vec::new();
+        for category in categories {
+            for tool in category.tools {
+                let parameters = tool
+                    .parametersStructured
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|parameter| {
+                        json!({
+                            "name": parameter.name,
+                            "type": parameter.r#type,
+                            "description": parameter.description,
+                            "required": parameter.required,
+                            "default": parameter.default,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                tools.push(json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": parameters,
+                    "category": category.categoryName,
+                    "source": "builtin",
+                }));
+            }
+        }
+
+        let packageManager = self.getOrCreatePackageManager();
+        let packageNames = packageManager
+            .lock()
+            .map_err(|_| "package manager mutex poisoned".to_string())?
+            .getAvailablePackages()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for packageName in packageNames {
+            let package = packageManager
+                .lock()
+                .map_err(|_| "package manager mutex poisoned".to_string())?
+                .getEffectivePackageTools(&packageName);
+            let Some(package) = package else {
+                continue;
+            };
+            for tool in package.tools.into_iter().filter(|tool| !tool.advice) {
+                let parameters = tool
+                    .parameters
+                    .into_iter()
+                    .map(|parameter| {
+                        json!({
+                            "name": parameter.name,
+                            "type": parameter.parameter_type,
+                            "description": parameter.description.resolve(useEnglish),
+                            "required": parameter.required,
+                            "default": Value::Null,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                tools.push(json!({
+                    "name": format!("{}:{}", packageName, tool.name),
+                    "description": tool.description.resolve(useEnglish),
+                    "parameters": parameters,
+                    "category": package.category,
+                    "source": "package",
+                    "packageName": packageName,
+                }));
+            }
+        }
+        Ok(json!({ "tools": tools }))
+    }
+
     /// Executes an SDK JavaScript tool request through the registered Operit tool chain.
     fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult {
         let tool = AITool {

@@ -16,6 +16,7 @@ use super::typewriter::TypewriterState;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct TranscriptRenderCache {
+    pub(super) xml: Vec<super::compose::XmlSurfaceSlot>,
     chat_id: Option<String>,
     pub(super) messages: HashMap<i64, TranscriptMessageRenderCache>,
     pub(super) fold_state: TranscriptFoldState,
@@ -24,6 +25,7 @@ pub(super) struct TranscriptRenderCache {
 
 #[derive(Clone, Debug)]
 pub(super) struct TranscriptMessageRenderCache {
+    pub(super) xml: Vec<super::compose::XmlSurfaceSlot>,
     pub(super) key: TranscriptMessageRenderKey,
     pub(super) lines: Vec<Line<'static>>,
     pub(super) fold_hits: Vec<TranscriptFoldHit>,
@@ -82,6 +84,7 @@ pub(super) fn render_transcript_lines(
     text: TuiText,
 ) -> Vec<Line<'static>> {
     if messages.is_empty() {
+        transcript_cache.clear();
         return render_blue_cat_lines(content_width, text);
     }
 
@@ -125,6 +128,7 @@ pub(super) fn render_transcript_lines(
                 .messages
                 .entry(message.timestamp)
                 .or_insert_with(|| TranscriptMessageRenderCache {
+                    xml: Vec::new(),
                     key: TranscriptMessageRenderKey::build(
                         message,
                         content_width,
@@ -141,6 +145,7 @@ pub(super) fn render_transcript_lines(
                 fold_signature,
             );
             cache.lines = rendered.lines.clone();
+            cache.xml = rendered.xml.clone();
             cache.fold_hits = rendered.hits.clone();
             output.extend(rendered);
             continue;
@@ -157,15 +162,12 @@ pub(super) fn render_transcript_lines(
             .get(&message.timestamp)
             .filter(|cached| cached.key == key)
         {
-            let mut cached_block = FoldedLines {
+            let cached_block = FoldedLines {
+                xml: cached.xml.clone(),
                 lines: cached.lines.clone(),
                 hits: cached.fold_hits.clone(),
             };
-            for hit in &mut cached_block.hits {
-                hit.line_index += output.lines.len();
-            }
-            output.lines.extend(cached_block.lines);
-            output.hits.extend(cached_block.hits);
+            output.extend(cached_block);
             continue;
         }
 
@@ -183,6 +185,7 @@ pub(super) fn render_transcript_lines(
         transcript_cache.messages.insert(
             message.timestamp,
             TranscriptMessageRenderCache {
+                xml: rendered.xml.clone(),
                 key,
                 lines: rendered.lines.clone(),
                 fold_hits: rendered.hits.clone(),
@@ -203,11 +206,13 @@ pub(super) fn render_transcript_lines(
         .lines
         .extend(render_input_error_lines(input_state, text));
     transcript_cache.fold_hits = output.hits;
+    transcript_cache.xml = output.xml;
     output.lines
 }
 
 impl TranscriptRenderCache {
     pub(super) fn clear(&mut self) {
+        self.xml.clear();
         self.chat_id = None;
         self.messages.clear();
         self.fold_state.clear();
@@ -238,6 +243,7 @@ impl TranscriptRenderCache {
             return;
         }
         self.chat_id = next_chat_id;
+        self.xml.clear();
         self.messages.clear();
         self.fold_state.clear();
         self.fold_hits.clear();

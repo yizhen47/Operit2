@@ -9,6 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use operit_model::ModelConfigData::{
     ModelCapabilities, ModelContextSpec, ProviderProfile, ResolvedModelConfig,
 };
+use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
 
 use super::helpers::centered_rect;
 use super::i18n::{TuiLanguage, TuiText};

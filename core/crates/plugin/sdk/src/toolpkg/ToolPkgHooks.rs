@@ -75,6 +75,16 @@ pub struct ToolPkgChatMessageHookRegistration {
     pub functionSource: Option<String>,
 }
 
+/// Registration for one manifest extension handler owned by a ToolPkg.
+#[derive(Clone, Debug)]
+#[allow(non_snake_case)]
+pub struct ToolPkgManifestExtensionRegistration {
+    pub containerPackageName: String,
+    pub extensionKey: String,
+    pub functionName: String,
+    pub functionSource: Option<String>,
+}
+
 /// Registration for one chat message context-menu item.
 #[derive(Clone, Debug)]
 #[allow(non_snake_case)]

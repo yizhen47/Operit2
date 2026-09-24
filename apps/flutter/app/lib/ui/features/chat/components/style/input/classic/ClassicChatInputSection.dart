@@ -20,6 +20,7 @@ import '../../../ChatLayoutMetrics.dart';
 import '../agent/AgentInputMenuPopup.dart';
 import '../agent/AgentModelSelectorPopup.dart';
 import '../common/ChatAttachmentImagePreview.dart';
+import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/PendingQueueMessageItem.dart';
 
@@ -460,8 +461,15 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
-                      children: <Widget>[
-                        if (widget.pendingQueueMessages.isNotEmpty)
+                    children: <Widget>[
+                      if (widget.currentChatId != null)
+                        ChatComposerSlotHost(
+                          viewModel: widget.viewModel,
+                          chatId: widget.currentChatId!,
+                          isProcessing: processing,
+                          pendingQueueCount: widget.pendingQueueMessages.length,
+                        ),
+                      if (widget.pendingQueueMessages.isNotEmpty)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: _ClassicPendingMessageQueuePanel(

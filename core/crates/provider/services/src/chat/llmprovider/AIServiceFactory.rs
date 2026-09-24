@@ -307,11 +307,18 @@ impl AIServiceFactory {
                     enable_tool_call,
                 )
             }
-            ApiProviderType::OPENAI_CODEX => {
-                return Err(AiServiceError::ProviderNotImplemented(
-                    "OPENAI_CODEX chat inference".to_string(),
-                ));
-            }
+            ApiProviderType::OPENAI_CODEX => Self::open_ai_responses_provider(
+                api_endpoint,
+                api_key_provider,
+                model_name,
+                custom_headers,
+                provider_type,
+                supports_vision,
+                supports_audio,
+                supports_video,
+                builtin_tools,
+                enable_tool_call,
+            ),
             ApiProviderType::ANTHROPIC | ApiProviderType::ANTHROPIC_GENERIC => {
                 Self::claude_provider(
                     api_endpoint,

@@ -7,6 +7,47 @@ pub(super) struct TuiCommandSpec {
     pub(super) description_key: TuiTextKey,
 }
 
+/// Describes one plugin-provided slash command returned by Core.
+#[derive(Clone, Debug)]
+pub(super) struct TuiPluginCommandSpec {
+    pub(super) name: String,
+    pub(super) usage: String,
+    pub(super) description: String,
+}
+
+/// Represents either a built-in or runtime-provided command suggestion.
+#[derive(Clone, Debug)]
+pub(super) enum TuiCommandSuggestion {
+    Builtin(TuiCommandSpec),
+    Plugin(TuiPluginCommandSpec),
+}
+
+impl TuiCommandSuggestion {
+    /// Returns the command name without its leading slash.
+    pub(super) fn name(&self) -> &str {
+        match self {
+            Self::Builtin(spec) => spec.name,
+            Self::Plugin(spec) => &spec.name,
+        }
+    }
+
+    /// Returns the command usage shown in the completion popup.
+    pub(super) fn usage(&self) -> &str {
+        match self {
+            Self::Builtin(spec) => spec.usage,
+            Self::Plugin(spec) => &spec.usage,
+        }
+    }
+
+    /// Returns the localized or plugin-provided command description.
+    pub(super) fn description(&self, language: TuiLanguage) -> String {
+        match self {
+            Self::Builtin(spec) => spec.description(language).to_string(),
+            Self::Plugin(spec) => spec.description.clone(),
+        }
+    }
+}
+
 const COMMAND_SPECS: [TuiCommandSpec; 41] = [
     TuiCommandSpec {
         name: "help",
@@ -225,33 +266,50 @@ pub(super) fn command_specs() -> &'static [TuiCommandSpec] {
     &COMMAND_SPECS
 }
 
-pub(super) fn matching_command_specs(input: &str) -> Vec<TuiCommandSpec> {
+pub(super) fn matching_command_specs(
+    input: &str,
+    plugin_commands: &[TuiPluginCommandSpec],
+) -> Vec<TuiCommandSuggestion> {
     let Some(prefix) = active_command_prefix(input) else {
         return Vec::new();
     };
-    command_specs()
+    let mut suggestions = command_specs()
         .iter()
         .copied()
+        .map(TuiCommandSuggestion::Builtin)
+        .collect::<Vec<_>>();
+    suggestions.extend(
+        plugin_commands
+            .iter()
+            .cloned()
+            .map(TuiCommandSuggestion::Plugin),
+    );
+    suggestions
+        .into_iter()
         .filter(|spec| {
             if prefix.is_empty() {
-                return !spec.name.contains(' ');
+                return !spec.name().contains(' ');
             }
             if prefix.chars().any(|ch| ch.is_whitespace()) {
-                return spec.name.starts_with(prefix.as_str());
+                return spec.name().starts_with(prefix.as_str());
             }
-            spec.name
+            spec.name()
                 .split_whitespace()
                 .next()
                 .map(|name| name.starts_with(prefix.as_str()))
                 .unwrap_or(false)
-                && !spec.name.contains(' ')
+                && !spec.name().contains(' ')
         })
         .collect()
 }
 
-pub(super) fn complete_command_input(_input: &str, command: TuiCommandSpec) -> (String, usize) {
+/// Completes the command prefix using the selected suggestion usage.
+pub(super) fn complete_command_input(
+    _input: &str,
+    command: &TuiCommandSuggestion,
+) -> (String, usize) {
     let command_text = command
-        .usage
+        .usage()
         .split_whitespace()
         .take_while(|part| !part.starts_with('<') && !part.starts_with('['))
         .collect::<Vec<_>>()

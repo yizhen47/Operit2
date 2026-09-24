@@ -15,6 +15,7 @@ use crossterm::terminal::{
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
+use serde::Deserialize;
 
 use operit_model::ActivePrompt::ActivePrompt;
 use operit_model::AttachmentInfo::AttachmentInfo;
@@ -41,6 +42,7 @@ use operit_util::GithubReleaseUtil::{
 use operit_util::MarkdownRenderStream::MarkdownStreamEvent;
 
 use super::approval::TuiApprovalBridge;
+use super::commands::TuiPluginCommandSpec;
 use super::config;
 use super::config::ConfigUi;
 use super::helpers::{short_chat_label, split_command_line};
@@ -70,6 +72,7 @@ const TRANSIENT_STATUS_DURATION: Duration = Duration::from_secs(3);
 const MAX_PENDING_TERMINAL_EVENTS_PER_FRAME: usize = 64;
 
 pub(super) struct OperitTui {
+    pub(super) compose: super::compose::ComposeHost,
     pub(super) core: TuiCore,
     networkControl: RuntimeRemoteLinkService,
     pub(super) initial_shell_args: ShellArgs,
@@ -97,6 +100,7 @@ pub(super) struct OperitTui {
     pub(super) input: String,
     pub(super) input_cursor: usize,
     pub(super) autocomplete_index: usize,
+    pub(super) plugin_commands: Vec<TuiPluginCommandSpec>,
     pub(super) queued_attachment_paths: Vec<String>,
     pub(super) queued_inline_attachments: Vec<AttachmentInfo>,
     pub(super) queued_attachment_tokens: Vec<QueuedAttachmentToken>,
@@ -110,8 +114,10 @@ pub(super) struct OperitTui {
     pub(super) pending_queue_manual_send: Option<PendingQueueMessage>,
     pub(super) paste_attachment_counter: usize,
     pub(super) status_message: String,
+    route_permission_error: Option<String>,
     pub(super) status_message_expires_at: Option<Instant>,
     pub(super) transient_status_message: Option<String>,
+    toast_receiver: mpsc::Receiver<String>,
     pub(super) context_usage_label: String,
     pub(super) transcript_scroll: u16,
     pub(super) transcript_viewport_height: u16,
@@ -144,6 +150,41 @@ pub(super) struct OperitTui {
 struct TuiMessageContentStreamState {
     revisionTracker: TextStreamRevisionTracker,
     partStream: AssistantMarkupStreamState,
+}
+
+#[derive(Deserialize)]
+struct PluginCommandInfoPayload {
+    name: String,
+    usage: String,
+    description: String,
+}
+
+/// Loads enabled ToolPkg slash-command metadata from the Core command registry.
+async fn load_plugin_command_specs(
+    core: &mut TuiCore,
+) -> Result<Vec<TuiPluginCommandSpec>, String> {
+    let args = vec![
+        "plugin".to_string(),
+        "commands".to_string(),
+        "--json".to_string(),
+    ];
+    let output = core
+        .runCoreCommand(&args)
+        .await
+        .map_err(|error| error.to_string())?;
+    if !output.stderr.trim().is_empty() {
+        return Err(output.stderr.trim().to_string());
+    }
+    let commands = serde_json::from_str::<Vec<PluginCommandInfoPayload>>(&output.stdout)
+        .map_err(|error| format!("plugin command metadata is invalid: {error}"))?;
+    Ok(commands
+        .into_iter()
+        .map(|command| TuiPluginCommandSpec {
+            name: command.name,
+            usage: command.usage,
+            description: command.description,
+        })
+        .collect())
 }
 
 impl TuiMessageContentStreamState {
@@ -313,6 +354,7 @@ impl OperitTui {
         startup_install_prompt: Option<StartupInstallPrompt>,
         startup_update_prompt: Option<StartupUpdatePrompt>,
         startup_workspace_prompt_path: Option<String>,
+        toast_receiver: mpsc::Receiver<String>,
     ) -> Result<Self, String> {
         let chat_histories = core
             .chat_runtime_holder_main()
@@ -333,16 +375,48 @@ impl OperitTui {
         let active_chat_id = current_chat_id_cache
             .clone()
             .ok_or_else(|| "no active chat in tui".to_string())?;
-        let current_messages_cache = core
+        let mut route_permission_error = None;
+        let current_messages_cache = match core
             .chat_runtime_holder_main()
             .chatMessagesFlowSnapshot(active_chat_id.clone())
             .await
-            .map_err(|error| error.to_string())?;
-        let current_chat_state_cache = core
+        {
+            Ok(messages) => messages,
+            Err(error) if error.isRoutePermissionDenied() => {
+                route_permission_error = Some(error.to_string());
+                Vec::new()
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let current_chat_state_cache = match core
             .chat_runtime_holder_main()
             .chatStateFlowSnapshot(active_chat_id.clone())
             .await
-            .map_err(|error| error.to_string())?;
+        {
+            Ok(state) => state,
+            Err(error) if error.isRoutePermissionDenied() => {
+                route_permission_error = Some(error.to_string());
+                ChatState {
+                    currentChatId: active_chat_id.clone(),
+                    currentChatTitle: String::new(),
+                    currentCharacterCardName: None,
+                    currentCharacterCardAvatarUri: None,
+                    currentWorkspacePath: None,
+                    isLoading: false,
+                    inputProcessingState: InputProcessingState::Error {
+                        message: route_permission_error
+                            .clone()
+                            .expect("route permission error must be recorded"),
+                    },
+                    hasOlderDisplayHistory: false,
+                    hasNewerDisplayHistory: false,
+                    isLoadingDisplayWindow: false,
+                    pendingQueueMessages: Vec::new(),
+                    isPendingQueueExpanded: false,
+                }
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         let current_chat_is_loading_cache = current_chat_state_cache.isLoading;
         let current_chat_input_processing_state_cache =
             current_chat_state_cache.inputProcessingState.clone();
@@ -351,19 +425,33 @@ impl OperitTui {
             .currentWindowSizeFlowSnapshot()
             .await
             .map_err(|error| error.to_string())?;
-        core.watchMainChatGeneratedStateFlows()
-            .await
-            .map_err(|error| error.to_string())?;
-        core.watchMainChatStateFlow(active_chat_id.clone())
-            .await
-            .map_err(|error| error.to_string())?;
-        core.watchMainChatMessagesFlow(active_chat_id)
-            .await
-            .map_err(|error| error.to_string())?;
+        if let Err(error) = core.watchMainChatGeneratedStateFlows().await {
+            if error.isRoutePermissionDenied() {
+                route_permission_error = Some(error.to_string());
+            } else {
+                return Err(error.to_string());
+            }
+        }
+        if let Err(error) = core.watchMainChatStateFlow(active_chat_id.clone()).await {
+            if error.isRoutePermissionDenied() {
+                route_permission_error = Some(error.to_string());
+            } else {
+                return Err(error.to_string());
+            }
+        }
+        if let Err(error) = core.watchMainChatMessagesFlow(active_chat_id).await {
+            if error.isRoutePermissionDenied() {
+                route_permission_error = Some(error.to_string());
+            } else {
+                return Err(error.to_string());
+            }
+        }
         core.syncMainChatContentStreams(&current_messages_cache)
             .await
             .map_err(|error| error.to_string())?;
+        let plugin_commands = load_plugin_command_specs(&mut core).await?;
         Ok(Self {
+            compose: super::compose::ComposeHost::default(),
             core,
             networkControl,
             initial_shell_args,
@@ -391,6 +479,7 @@ impl OperitTui {
             input: String::new(),
             input_cursor: 0,
             autocomplete_index: 0,
+            plugin_commands,
             queued_attachment_paths: Vec::new(),
             queued_inline_attachments: Vec::new(),
             queued_attachment_tokens: Vec::new(),
@@ -403,9 +492,11 @@ impl OperitTui {
             pending_queue_auto_send_at: None,
             pending_queue_manual_send: None,
             paste_attachment_counter: 0,
-            status_message,
+            status_message: route_permission_error.clone().unwrap_or(status_message),
+            route_permission_error,
             status_message_expires_at: None,
             transient_status_message: None,
+            toast_receiver,
             context_usage_label: String::new(),
             transcript_scroll: 0,
             transcript_viewport_height: 1,
@@ -487,6 +578,7 @@ impl OperitTui {
             }
         };
         let result = self.run_loop(&mut terminal).await;
+        let compose_cleanup = self.compose.clear(&mut self.core).await;
         let screen_result = execute!(
             terminal.backend_mut(),
             DisableMouseCapture,
@@ -498,7 +590,24 @@ impl OperitTui {
         let cursor_result = terminal.show_cursor().map_err(|error| error.to_string());
         let cleanup_result = screen_result.and(raw_mode_result).and(cursor_result);
         AppLogger::set_enable_console_logging(previous_console_logging);
-        result.and(cleanup_result)
+        result.and(cleanup_result).and(compose_cleanup)
+    }
+
+    /// Applies a route permission failure to the visible TUI state.
+    fn apply_route_permission_error(&mut self, error: String) {
+        self.current_chat_is_loading_cache = false;
+        self.last_current_chat_loading = false;
+        self.awaiting_runtime_loading = false;
+        self.current_chat_input_processing_state_cache = InputProcessingState::Error {
+            message: error.clone(),
+        };
+        self.route_permission_error = Some(error.clone());
+        self.set_status_message(error);
+    }
+
+    /// Returns whether a rendered error is a route permission failure.
+    fn is_route_permission_error_message(error: &str) -> bool {
+        error.strip_prefix("ROUTE_PERMISSION_DENIED:").is_some()
     }
 
     async fn run_loop(
@@ -507,16 +616,42 @@ impl OperitTui {
     ) -> Result<(), String> {
         while !self.should_quit {
             self.ensure_pending_queue_chat_id();
-            self.apply_pushed_events().await?;
+            if let Err(error) = self.apply_pushed_events().await {
+                if Self::is_route_permission_error_message(&error) {
+                    self.apply_route_permission_error(error);
+                } else {
+                    return Err(error);
+                }
+            }
+            self.apply_toast_messages();
+            if let Err(error) = self.sync_compose_surfaces().await {
+                if Self::is_route_permission_error_message(&error) {
+                    self.apply_route_permission_error(error);
+                } else {
+                    self.status_message = error;
+                }
+            }
             self.ensure_pending_queue_chat_id();
             self.refresh_runtime_status_if_due().await;
-            self.advance_pending_message_queue().await?;
+            if let Err(error) = self.advance_pending_message_queue().await {
+                if Self::is_route_permission_error_message(&error) {
+                    self.apply_route_permission_error(error);
+                } else {
+                    return Err(error);
+                }
+            }
             self.clear_expired_status_message();
             terminal
                 .draw(|frame| self.render(frame))
                 .map_err(|error| error.to_string())?;
 
-            self.handle_terminal_events(EVENT_POLL_INTERVAL).await?;
+            if let Err(error) = self.handle_terminal_events(EVENT_POLL_INTERVAL).await {
+                if Self::is_route_permission_error_message(&error) {
+                    self.apply_route_permission_error(error);
+                } else {
+                    return Err(error);
+                }
+            }
         }
         Ok(())
     }
@@ -525,6 +660,13 @@ impl OperitTui {
         self.status_message = message.clone();
         self.transient_status_message = Some(message);
         self.status_message_expires_at = Some(Instant::now() + TRANSIENT_STATUS_DURATION);
+    }
+
+    /// Applies queued host toasts to the TUI transient status line.
+    fn apply_toast_messages(&mut self) {
+        while let Ok(message) = self.toast_receiver.try_recv() {
+            self.set_transient_status_message(message);
+        }
     }
 
     fn clear_expired_status_message(&mut self) {
@@ -563,13 +705,66 @@ impl OperitTui {
     async fn handle_terminal_event(&mut self, terminal_event: Event) -> Result<(), String> {
         match terminal_event {
             Event::Key(key) => self.handle_key_event(key).await,
-            Event::Mouse(mouse) => self.handle_mouse_event(mouse),
-            Event::Paste(text) => self.handle_paste(text).await,
+            Event::Mouse(mouse) => self.handle_mouse_event(mouse).await,
+            Event::Paste(text) => {
+                if let Some(editor) = &mut self.compose.editor {
+                    editor.value.push_str(&text);
+                    Ok(())
+                } else {
+                    self.handle_paste(text).await
+                }
+            }
             _ => Ok(()),
         }
     }
 
-    fn handle_mouse_event(&mut self, mouse: MouseEvent) -> Result<(), String> {
+    /// Routes plugin control clicks before transcript selection and scrolling.
+    async fn handle_mouse_event(&mut self, mouse: MouseEvent) -> Result<(), String> {
+        let overlay = self.show_help
+            || self.show_config_popup
+            || self.show_list_popup
+            || self.show_model_chooser
+            || self.startup_install_prompt.is_some()
+            || self.startup_update_prompt.is_some()
+            || self.startup_workspace_prompt.is_some()
+            || self.approval_bridge.current().is_some();
+        if self.compose.editor.is_some() {
+            return Ok(());
+        }
+        if !overlay {
+            let area = super::scrollbar::split_transcript_inner(self.transcript_area).content;
+            let inside = mouse.column >= area.x
+                && mouse.column < area.x + area.width
+                && mouse.row >= area.y
+                && mouse.row < area.y + area.height;
+            let row = if inside {
+                usize::from(mouse.row - area.y + self.transcript_scroll)
+            } else {
+                usize::MAX
+            };
+            let col = if inside {
+                usize::from(mouse.column - area.x)
+            } else {
+                usize::MAX
+            };
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) if self.compose.press(row, col) => {
+                    self.transcript_selection.clear();
+                    return Ok(());
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    match self.compose.release_click(&mut self.core, row, col).await {
+                        Ok(true) => return Ok(()),
+                        Ok(false) => {}
+                        Err(error) => {
+                            self.status_message = error;
+                            return Ok(());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
         match mouse.kind {
             MouseEventKind::ScrollUp => self.scroll_transcript_up(self.terminal_wheel_step()),
             MouseEventKind::ScrollDown => self.scroll_transcript_down(self.terminal_wheel_step()),
@@ -735,6 +930,29 @@ impl OperitTui {
         }
 
         self.ctrl_c_pending = false;
+
+        if self.compose.editor.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.compose.editor = None;
+                }
+                KeyCode::Enter => {
+                    if let Err(error) = self.compose.commit_editor(&mut self.core).await {
+                        self.status_message = error;
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.compose.editor.as_mut().unwrap().value.pop();
+                }
+                KeyCode::Char(ch)
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
+                    self.compose.editor.as_mut().unwrap().value.push(ch);
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
 
         if self.startup_install_prompt.is_some() {
             self.handle_startup_install_prompt_key(key).await?;
@@ -1442,10 +1660,38 @@ impl OperitTui {
                 self.handle_update_command().await?;
             }
             _ => {
-                self.status_message = self.text().unknown_command(command);
+                self.handle_plugin_core_command(command, &parts[1..]).await;
             }
         }
         Ok(())
+    }
+
+    /// Executes a ToolPkg slash command through the shared Core command dispatcher.
+    async fn handle_plugin_core_command(&mut self, command: &str, args: &[String]) {
+        let mut command_args = vec![
+            "plugin".to_string(),
+            "exec".to_string(),
+            command.to_string(),
+        ];
+        command_args.extend_from_slice(args);
+        match self.core.runCoreCommand(&command_args).await {
+            Ok(output) => {
+                let lines = output
+                    .stdout
+                    .lines()
+                    .chain(output.stderr.lines())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                if lines.len() > 1 {
+                    self.open_list_popup(format!("/{command}"), lines);
+                } else {
+                    self.status_message = lines.join("");
+                }
+            }
+            Err(error) => {
+                self.status_message = error.to_string();
+            }
+        }
     }
 
     /// Executes a Space control command through the runtime-owned authorization service.
@@ -2148,6 +2394,7 @@ impl OperitTui {
             .currentWindowSizeFlowSnapshot()
             .await
             .map_err(|error| error.to_string())?;
+        self.route_permission_error = None;
         Ok(())
     }
 
@@ -2563,6 +2810,10 @@ impl OperitTui {
     }
 
     async fn refresh_runtime_status(&mut self) {
+        if let Some(error) = self.route_permission_error.clone() {
+            self.set_status_message(error);
+            return;
+        }
         self.refresh_context_usage_label().await;
         let is_loading = self.raw_current_chat_is_loading();
         let state = self.current_chat_input_processing_state();

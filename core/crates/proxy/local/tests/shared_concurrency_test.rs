@@ -412,8 +412,7 @@ async fn shared_core_accepts_nested_owner_response() {
                             "musicPlayback": null,
                             "bluetooth": null,
                             "ttsSynthesis": null,
-                            "ttsPlayback": null,
-                            "toolPermission": null
+                            "ttsPlayback": null
                         }
                     }))
                     .unwrap(),
@@ -476,6 +475,106 @@ async fn generated_proxy_chat_messages_flow_opens_local_flow() {
             let messages: Vec<ChatMessage> =
                 fromCoreValue(messages_event.value).expect("proxy chat messages must decode");
             assert!(messages.is_empty());
+        })
+        .await;
+}
+
+/// Verifies a generated chat proxy instance resolves to an isolated detached slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn generated_proxy_chat_instance_uses_detached_runtime_slot() {
+    let _testGuard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let storage_host = register_test_runtime_roots();
+            let mut host_manager =
+                HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+            host_manager.runtimeStorageHost = Some(storage_host.clone());
+            host_manager.runtimeSqliteHost = Some(storage_host);
+            host_manager.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+            host_manager.hostJavaScriptRuntimeHost =
+                Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+            host_manager.hostRuntimeTaskSchedulerHost =
+                Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+            let proxy = LocalCoreProxy::new(OperitApplication::newWithContext(host_manager));
+            let chat_object_id =
+                LocalCoreProxy::generatedObjectIdForSchema("chatRuntimeHolderMain")
+                    .expect("chatRuntimeHolderMain object id must be generated");
+            let detached_slot_id = "window-slot-a";
+
+            let (main_chat_id, detached_chat_id) = {
+                let holder = proxy.chatRuntimeHolder();
+                let mut holder = holder.lock().await;
+                let main_core = holder
+                    .coreForObjectId(chat_object_id)
+                    .expect("chat runtime holder main core must exist");
+                main_core.createNewChat(None, None, false, true, None);
+                let main_chat_id = main_core
+                    .currentChatIdFlow()
+                    .value()
+                    .expect("main runtime must select its new chat");
+                main_core.chatHistoryDelegate.addMessageToChat(
+                    ChatMessage::new_with_markdown("user".to_string(), "main".to_string()),
+                    Some(main_chat_id.clone()),
+                );
+                let detached_core = holder
+                    .coreForInstanceId(detached_slot_id.to_string())
+                    .expect("detached runtime core must exist");
+                detached_core.createNewChat(None, None, false, true, None);
+                let detached_chat_id = detached_core
+                    .currentChatIdFlow()
+                    .value()
+                    .expect("detached runtime must select its new chat");
+                (main_chat_id, detached_chat_id)
+            };
+            assert_ne!(main_chat_id, detached_chat_id);
+
+            let event = CoreLinkSharedClient::watchSnapshot(
+                &proxy,
+                CoreWatchRequest::new(
+                    "detached-chat-current-id",
+                    chat_object_id,
+                    "currentChatIdFlow",
+                    toCoreValue(json!({ "__core_instance_id": detached_slot_id })).unwrap(),
+                ),
+            )
+            .await
+            .expect("detached chat runtime snapshot must succeed");
+            let current_chat_id: Option<String> =
+                fromCoreValue(event.value).expect("detached chat id must decode");
+            assert_eq!(current_chat_id.as_deref(), Some(detached_chat_id.as_str()));
+
+            let response = CoreLinkSharedClient::call(
+                &proxy,
+                CoreCallRequest::new(
+                    "detached-chat-switch",
+                    chat_object_id,
+                    "switchChatLocal",
+                    toCoreValue(json!({
+                        "__core_instance_id": detached_slot_id,
+                        "chatId": main_chat_id,
+                    }))
+                    .unwrap(),
+                ),
+            )
+            .await;
+            response
+                .result
+                .expect("detached chat runtime call must succeed");
+
+            let event = CoreLinkSharedClient::watchSnapshot(
+                &proxy,
+                CoreWatchRequest::new(
+                    "detached-chat-switched-id",
+                    chat_object_id,
+                    "currentChatIdFlow",
+                    toCoreValue(json!({ "__core_instance_id": detached_slot_id })).unwrap(),
+                ),
+            )
+            .await
+            .expect("detached chat runtime snapshot after call must succeed");
+            let current_chat_id: Option<String> =
+                fromCoreValue(event.value).expect("detached chat id after call must decode");
+            assert_eq!(current_chat_id.as_deref(), Some(main_chat_id.as_str()));
         })
         .await;
 }

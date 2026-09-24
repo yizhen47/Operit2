@@ -160,6 +160,19 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
               });
           return;
         }
+        if (call.method_name() == "setCaptureEnabled") {
+          const auto arguments = call.arguments();
+          const auto enabled =
+              arguments == nullptr ? nullptr : std::get_if<bool>(arguments);
+          if (enabled == nullptr) {
+            result->Error("invalid_arguments",
+                          "setCaptureEnabled requires a boolean");
+            return;
+          }
+          SetCaptureEnabled(*enabled);
+          result->Success();
+          return;
+        }
         if (call.method_name() != "dispatchKeyEvent") {
           result->NotImplemented();
           return;
@@ -582,7 +595,9 @@ void WebviewBridge::SetSize(double width, double height, double scale_factor) {
   webview_->SetSurfaceSize(static_cast<size_t>(width),
                            static_cast<size_t>(height),
                            static_cast<float>(scale_factor));
-  texture_bridge_->Start();
+  if (capture_enabled_) {
+    texture_bridge_->Start();
+  }
 }
 
 bool WebviewBridge::DispatchKeyEvent(const std::string &event_json) {
@@ -673,7 +688,19 @@ void WebviewBridge::Suspend() {
 
 void WebviewBridge::Resume() {
   webview_->Resume();
-  texture_bridge_->Start();
+  if (capture_enabled_) {
+    texture_bridge_->Start();
+  }
+}
+
+/// Starts compositor capture when the surface is shown, and stops it when covered.
+void WebviewBridge::SetCaptureEnabled(bool enabled) {
+  capture_enabled_ = enabled;
+  if (enabled) {
+    texture_bridge_->Start();
+  } else {
+    texture_bridge_->Stop();
+  }
 }
 
 void WebviewBridge::SetVirtualHostNameMapping(const std::string &host_name,

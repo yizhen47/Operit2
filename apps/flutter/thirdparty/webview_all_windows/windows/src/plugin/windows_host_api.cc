@@ -58,9 +58,9 @@ WindowsHostApi::WindowsHostApi(flutter::TextureRegistrar *textures,
       result->Error("invalid_color_scheme", "Expected dark or light");
       return;
     }
-    preferred_dark_ = *scheme == "dark";
+    const bool preferred_dark = *scheme == "dark";
     for (const auto &entry : instances_) {
-      if (!entry.second->SetPreferredColorScheme(*preferred_dark_)) {
+      if (!entry.second->SetPreferredColorScheme(preferred_dark)) {
         result->Error("color_scheme_failed", "WebView2 rejected the color preference");
         return;
       }
@@ -173,11 +173,6 @@ void WindowsHostApi::CreateWebView(
               kErrorCodeWebviewCreationFailed, "Creating the webview failed."));
         }
 
-        if (preferred_dark_.has_value() &&
-            !webview->SetPreferredColorScheme(*preferred_dark_)) {
-          return result(webview_all_windows::FlutterError(
-              kErrorMethodFailed, "WebView2 rejected the color preference"));
-        }
         auto bridge = std::make_unique<WebviewBridge>(
             messenger_, textures_, platform_->graphics_context(),
             std::move(webview));

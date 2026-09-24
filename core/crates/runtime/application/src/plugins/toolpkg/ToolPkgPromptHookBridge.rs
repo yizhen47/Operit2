@@ -381,8 +381,9 @@ fn dispatch_prompt_hooks(
     }
 }
 
+/// Serializes prompt histories and omits absent optional fields for the plugin SDK contract.
 fn prompt_context_to_value(context: &PromptHookContext) -> Value {
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "stage": context.stage,
         "chatId": context.chat_id,
         "functionType": context.function_type,
@@ -390,12 +391,47 @@ fn prompt_context_to_value(context: &PromptHookContext) -> Value {
         "useEnglish": context.use_english,
         "rawInput": context.raw_input,
         "processedInput": context.processed_input,
+        "chatHistory": context.chat_history,
+        "preparedHistory": context.prepared_history,
         "systemPrompt": context.system_prompt,
         "toolPrompt": context.tool_prompt,
         "modelParameters": context.model_parameters,
         "availableTools": context.available_tools,
         "metadata": context.metadata
-    })
+    });
+    payload.as_object_mut().expect("prompt payload must be an object")
+        .retain(|_, value| !value.is_null());
+    payload
+}
+
+#[cfg(test)]
+mod payload_tests {
+    use super::*;
+
+    /// Preserves complete prompt turns across the plugin payload and mutation boundary.
+    #[test]
+    fn prompt_histories_round_trip_through_plugin_payload() {
+        let context = PromptHookContext {
+            chat_history: vec![PromptTurn::new(PromptTurnKind::USER, "Design login")],
+            prepared_history: vec![PromptTurn::new(PromptTurnKind::SYSTEM, "Plan instructions")],
+            ..PromptHookContext::default()
+        };
+        let payload = prompt_context_to_value(&context);
+        let mutation = parse_prompt_object_result(payload.as_object().unwrap());
+        assert_eq!(mutation.chat_history.unwrap(), context.chat_history);
+        assert_eq!(mutation.prepared_history.unwrap(), context.prepared_history);
+        assert!(payload.get("promptFunctionType").is_none());
+        assert!(payload.get("functionType").is_none());
+
+        let explicit = PromptHookContext {
+            prompt_function_type: Some("VOICE".to_string()),
+            use_english: Some(false),
+            ..context
+        };
+        let payload = prompt_context_to_value(&explicit);
+        assert_eq!(payload["promptFunctionType"], "VOICE");
+        assert_eq!(payload["useEnglish"], false);
+    }
 }
 
 fn parse_prompt_hook_result(

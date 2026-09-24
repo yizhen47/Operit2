@@ -8,7 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use super::app::{OperitTui, QueuedAttachmentToken, QueuedAttachmentTokenKind};
-use super::commands::{complete_command_input, matching_command_specs, TuiCommandSpec};
+use super::commands::{complete_command_input, matching_command_specs, TuiCommandSuggestion};
 use super::helpers::{char_to_byte_index, display_width, wrap_approx_lines};
 
 const PASTE_ATTACHMENT_CHAR_THRESHOLD: usize = 2_048;
@@ -84,8 +84,8 @@ impl OperitTui {
     }
 
     /// Returns command suggestions matching the current input buffer.
-    pub(super) fn command_suggestions(&self) -> Vec<TuiCommandSpec> {
-        matching_command_specs(&self.input)
+    pub(super) fn command_suggestions(&self) -> Vec<TuiCommandSuggestion> {
+        matching_command_specs(&self.input, &self.plugin_commands)
     }
 
     /// Returns the selected command suggestion index within the available range.
@@ -166,7 +166,7 @@ impl OperitTui {
             return;
         }
         let index = self.selected_command_index(suggestions.len());
-        let (input, cursor) = complete_command_input(&self.input, suggestions[index]);
+        let (input, cursor) = complete_command_input(&self.input, &suggestions[index]);
         self.input = input;
         self.input_cursor = cursor;
         self.autocomplete_index = 0;
@@ -186,7 +186,7 @@ impl OperitTui {
             .unwrap_or("")
             .trim_end()
             .to_ascii_lowercase();
-        !current.is_empty() && current != suggestions[index].name
+        !current.is_empty() && current != suggestions[index].name()
     }
 
     /// Moves the command suggestion selection up by one row.

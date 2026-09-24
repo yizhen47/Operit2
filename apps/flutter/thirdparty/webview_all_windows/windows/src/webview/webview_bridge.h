@@ -97,6 +97,9 @@ public:
   void SetPopupWindowPolicy(int64_t policy);
   void SetFpsLimit(int64_t max_fps);
 
+  /// Starts or stops compositor capture without suspending the page.
+  void SetCaptureEnabled(bool enabled);
+
 private:
   std::unique_ptr<flutter::TextureVariant> flutter_texture_;
   std::unique_ptr<TextureBridge> texture_bridge_;
@@ -112,6 +115,7 @@ private:
   std::mutex surface_frame_capture_mutex_;
   std::vector<SurfaceFrameCaptureCallback> pending_surface_frame_captures_;
   bool surface_frame_readback_active_ = false;
+  bool capture_enabled_ = true;
 
   void RegisterEventHandlers();
   void OnTextureFrameAvailable();

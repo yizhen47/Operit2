@@ -131,6 +131,12 @@ impl RuntimeStorageRepository {
     }
 
     #[allow(non_snake_case)]
+    /// Returns the runtime storage directory for external plugin packages.
+    pub fn externalPackagesDirPath(&self) -> String {
+        OperitPaths::EXTENSIONS_PACKAGES_DIR_PATH.to_string()
+    }
+
+    #[allow(non_snake_case)]
     /// Returns the runtime storage directory path for imported theme assets.
     pub fn themeAssetsDirPath(&self) -> String {
         OperitPaths::RUNTIME_THEME_ASSETS_DIR_PATH.to_string()

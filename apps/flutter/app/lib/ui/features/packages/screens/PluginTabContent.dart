@@ -15,6 +15,7 @@ class PluginTabContent extends StatelessWidget {
     super.key,
     required this.plugins,
     required this.morePlugins,
+    required this.loadIssues,
     required this.enabledPluginNames,
     required this.isLoading,
     required this.isSearchActive,
@@ -22,10 +23,13 @@ class PluginTabContent extends StatelessWidget {
     required this.onPluginTap,
     required this.onLoadMorePlugin,
     required this.onPluginEnabledChanged,
+    this.onPluginReordered,
+    required this.onLoadIssueTap,
   });
 
   final List<core_proxy.ToolPkgContainerRuntime> plugins;
   final List<core_proxy.BundledExternalPackageCandidate> morePlugins;
+  final List<core_proxy.ToolPkgLoadIssue> loadIssues;
   final Set<String> enabledPluginNames;
   final bool isLoading;
   final bool isSearchActive;
@@ -35,11 +39,17 @@ class PluginTabContent extends StatelessWidget {
   onLoadMorePlugin;
   final void Function(core_proxy.ToolPkgContainerRuntime plugin, bool enabled)
   onPluginEnabledChanged;
+  final void Function(String sourcePackageName, String targetPackageName)?
+  onPluginReordered;
+  final ValueChanged<core_proxy.ToolPkgLoadIssue> onLoadIssueTap;
 
   /// Builds the plugin tab with lazily rendered expandable sections.
   @override
   Widget build(BuildContext context) {
-    if (plugins.isEmpty && morePlugins.isEmpty && isLoading) {
+    if (plugins.isEmpty &&
+        morePlugins.isEmpty &&
+        loadIssues.isEmpty &&
+        isLoading) {
       return const M3LoadingPane();
     }
     return Stack(
@@ -47,7 +57,7 @@ class PluginTabContent extends StatelessWidget {
         CustomScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: <Widget>[
-            if (plugins.isEmpty && morePlugins.isEmpty)
+            if (plugins.isEmpty && morePlugins.isEmpty && loadIssues.isEmpty)
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
                 sliver: SliverToBoxAdapter(
@@ -68,7 +78,7 @@ class PluginTabContent extends StatelessWidget {
                   child: _PluginSectionHeader(title: '当前插件'),
                 ),
               ),
-              if (plugins.isEmpty)
+              if (plugins.isEmpty && loadIssues.isEmpty)
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
                   sliver: SliverToBoxAdapter(
@@ -84,7 +94,10 @@ class PluginTabContent extends StatelessWidget {
                     itemCount: plugins.length,
                     itemBuilder: (context, index) {
                       final plugin = plugins[index];
-                      return PackageListItem(
+                      final issueMessage = plugin.dependencyIssues.isEmpty
+                          ? null
+                          : _pluginDependencyIssueMessage(plugin);
+                      final item = PackageListItem(
                         key: ValueKey<String>('plugin:${plugin.packageName}'),
                         icon: Icons.extension_outlined,
                         title: toolPkgContainerDisplayName(plugin),
@@ -93,7 +106,11 @@ class PluginTabContent extends StatelessWidget {
                           plugin.packageName,
                           'v${plugin.version}',
                           '${plugin.subpackages.length} 子包',
+                          if (plugin.dependencyIssues.isNotEmpty)
+                            '${plugin.dependencyIssues.length} 个前置插件问题',
                         ],
+                        hasError: plugin.dependencyIssues.isNotEmpty,
+                        errorMessage: issueMessage,
                         enabled: enabledPluginNames.contains(
                           plugin.packageName,
                         ),
@@ -120,9 +137,59 @@ class PluginTabContent extends StatelessWidget {
                               ]
                             : const <Widget>[],
                       );
+                      final onReordered = onPluginReordered;
+                      if (onReordered == null) {
+                        return item;
+                      }
+                      return _PluginReorderTarget(
+                        plugin: plugin,
+                        onReordered: onReordered,
+                        child: item,
+                      );
                     },
                   ),
                 ),
+              if (loadIssues.isNotEmpty) ...<Widget>[
+                const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  sliver: const SliverToBoxAdapter(
+                    child: _PluginSectionHeader(
+                      title: '加载失败',
+                      subtitle: '这些插件未能完成解析或注册，点击卡片查看完整错误。',
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+                  sliver: PackageSliverList(
+                    itemCount: loadIssues.length,
+                    itemBuilder: (context, index) {
+                      final issue = loadIssues[index];
+                      return PackageListItem(
+                        key: ValueKey<String>(
+                          'plugin-load-issue:${issue.sourcePath}:${issue.code}:$index',
+                        ),
+                        icon: Icons.error_outline,
+                        title: issue.displayName,
+                        subtitle: issue.message,
+                        metadata: <String>[
+                          issue.packageName ?? '',
+                          issue.packageKind,
+                          issue.code,
+                          issue.sourcePath,
+                        ],
+                        enabled: false,
+                        showEnabledSwitch: false,
+                        hasError: true,
+                        errorMessage: issue.message,
+                        onEnabledChanged: (_) {},
+                        onDetails: () => onLoadIssueTap(issue),
+                      );
+                    },
+                  ),
+                ),
+              ],
               if (morePlugins.isNotEmpty) ...<Widget>[
                 const SliverToBoxAdapter(child: SizedBox(height: 16)),
                 SliverPadding(
@@ -185,9 +252,90 @@ class PluginTabContent extends StatelessWidget {
             ],
           ],
         ),
-        if ((plugins.isNotEmpty || morePlugins.isNotEmpty) && isLoading)
+        if ((plugins.isNotEmpty ||
+                morePlugins.isNotEmpty ||
+                loadIssues.isNotEmpty) &&
+            isLoading)
           const Positioned.fill(child: M3LoadingOverlay()),
       ],
+    );
+  }
+}
+
+/// Resolves the compact dependency error shown on a plugin card.
+String _pluginDependencyIssueMessage(
+  core_proxy.ToolPkgContainerRuntime plugin,
+) {
+  final issues = plugin.dependencyIssues;
+  if (issues.length > 1) {
+    return '${issues.length} 个前置插件不可用';
+  }
+  final issue = issues.single;
+  return switch (issue.code) {
+    'missing' => '缺少前置插件：${issue.id}',
+    'disabled' => '前置插件未启用：${issue.id}',
+    'version_incompatible' => '前置插件版本不满足：${issue.id}',
+    'load_order' => '前置插件加载顺序错误：${issue.id}',
+    _ => throw StateError(
+      'Unsupported ToolPkg dependency issue code: ${issue.code}',
+    ),
+  };
+}
+
+class _PluginReorderTarget extends StatelessWidget {
+  /// Creates a draggable plugin card and its reorder drop target.
+  const _PluginReorderTarget({
+    required this.plugin,
+    required this.onReordered,
+    required this.child,
+  });
+
+  final core_proxy.ToolPkgContainerRuntime plugin;
+  final void Function(String sourcePackageName, String targetPackageName)
+  onReordered;
+  final Widget child;
+
+  /// Builds the long-press drag source for one plugin card.
+  @override
+  Widget build(BuildContext context) {
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) => details.data != plugin.packageName,
+      onAcceptWithDetails: (details) =>
+          onReordered(details.data, plugin.packageName),
+      builder: (context, candidateData, rejectedData) {
+        final isDropTarget = candidateData.isNotEmpty;
+        return LayoutBuilder(
+          builder: (context, constraints) => AnimatedScale(
+            scale: isDropTarget ? 1.015 : 1,
+            duration: const Duration(milliseconds: 140),
+            child: LongPressDraggable<String>(
+              data: plugin.packageName,
+              delay: const Duration(milliseconds: 160),
+              hapticFeedbackOnStart: true,
+              maxSimultaneousDrags: 1,
+              feedback: Material(
+                color: Colors.transparent,
+                elevation: 8,
+                shadowColor: Theme.of(context).colorScheme.shadow,
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: child,
+                  ),
+                ),
+              ),
+              childWhenDragging: child,
+              child: child,
+            ),
+          ),
+        );
+      },
     );
   }
 }

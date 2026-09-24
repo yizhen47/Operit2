@@ -2,8 +2,9 @@ use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -57,6 +58,8 @@ thread_local! {
     static CURRENT_EXECUTION_HOST: RefCell<Option<Arc<dyn JsExecutionHost>>> = RefCell::new(None);
     static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(String) + Send + Sync>>> = RefCell::new(None);
     static CURRENT_EXECUTION_LISTENER: RefCell<Option<JsExecutionListenerRef>> = RefCell::new(None);
+    static CURRENT_DETACHED_INTERMEDIATE_CALLBACKS: RefCell<BTreeMap<String, Arc<dyn Fn(String) + Send + Sync>>> =
+        RefCell::new(BTreeMap::new());
     static CURRENT_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_TOOLPKG_TEXT_RESOURCES: RefCell<Option<Arc<ToolPkgTextResources>>> = RefCell::new(None);
@@ -82,6 +85,7 @@ pub struct JsComposeDslActionEventStream {
 struct JsEngineWorker {
     runtimeHost: Arc<dyn HostJavaScriptRuntimeHost>,
     stateHandle: HostJavaScriptRuntimeStateHandle,
+    alive: Arc<AtomicBool>,
 }
 
 struct JsAsyncCallback {
@@ -91,6 +95,7 @@ struct JsAsyncCallback {
 }
 
 type JsAsyncCallbackSink = Arc<dyn Fn(JsAsyncCallback) + Send + Sync>;
+type JsBackgroundWake = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Clone)]
 struct JsCallContext {
@@ -125,9 +130,11 @@ struct JsEngineState {
     runtime: Box<dyn HostJavaScriptRuntime>,
     asyncCallbackSender: mpsc::Sender<JsAsyncCallback>,
     asyncCallbackReceiver: mpsc::Receiver<JsAsyncCallback>,
+    backgroundWake: Arc<Mutex<Option<JsBackgroundWake>>>,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
     toolPkgContext: Option<ToolPkgExecutionContext>,
     composeDslTextResources: Option<Arc<ToolPkgTextResources>>,
+    detachedCallContexts: BTreeMap<String, JsCallContext>,
     jsEnvironmentInitialized: bool,
 }
 
@@ -139,22 +146,83 @@ impl JsEngineWorker {
     ) -> Self {
         let runtimeHost = defaultHostJavaScriptRuntimeHost();
         let runtimeHostForState = runtimeHost.clone();
+        let backgroundWake = Arc::new(Mutex::new(None));
+        let backgroundWakeForState = backgroundWake.clone();
         let stateHandle = runtimeHost
             .createHostJavaScriptRuntimeState(
                 "OperitQuickJsEngine",
                 Box::new(move || {
                     let runtime = runtimeHostForState.createHostJavaScriptRuntime()?;
-                    let state =
-                        JsEngineState::newWithRuntime(runtime, executionHost, toolPkgContext)
-                            .map_err(HostError::new)?;
+                    let state = JsEngineState::newWithRuntime(
+                        runtime,
+                        executionHost,
+                        toolPkgContext,
+                        backgroundWakeForState,
+                    )
+                    .map_err(HostError::new)?;
                     Ok(Box::new(state))
                 }),
             )
             .expect("JavaScript runtime state must be created by the Host");
-        Self {
-            runtimeHost,
-            stateHandle,
-        }
+        let scheduled = Arc::new(AtomicBool::new(false));
+        let requested = Arc::new(AtomicBool::new(false));
+        let alive = Arc::new(AtomicBool::new(true));
+        let wakeRuntimeHost = runtimeHost.clone();
+        let wakeScheduler = defaultHostRuntimeTaskSchedulerHost();
+        let wakeSlot = backgroundWake.clone();
+        let wakeAlive = alive.clone();
+        let wake: JsBackgroundWake = Arc::new(move || {
+            if !wakeAlive.load(Ordering::Acquire) {
+                return;
+            }
+            requested.store(true, Ordering::Release);
+            if scheduled.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            let taskRuntimeHost = wakeRuntimeHost.clone();
+            let taskScheduler = wakeScheduler.clone();
+            let taskScheduled = scheduled.clone();
+            let taskRequested = requested.clone();
+            let taskWakeSlot = wakeSlot.clone();
+            let taskAlive = wakeAlive.clone();
+            let task: operit_host_api::HostRuntimeAsyncTask = Box::new(move || Box::pin(async move {
+                if !taskAlive.load(Ordering::Acquire) {
+                    return;
+                }
+                taskRequested.store(false, Ordering::Release);
+                let result = taskRuntimeHost
+                    .executeHostJavaScriptRuntimeStateAsyncTask(
+                        stateHandle,
+                        60_000,
+                        Box::new(move |state, _interrupt| Box::pin(async move {
+                            let state = state.downcast_mut::<JsEngineState>().ok_or_else(|| {
+                                HostError::new("JavaScript runtime state type does not match")
+                            })?;
+                            state.advanceDetachedJavaScriptExecution().map_err(HostError::new)?;
+                            Ok(Box::new(()) as HostJavaScriptRuntimeStateOutput)
+                        })),
+                    )
+                    .await;
+                if let Err(error) = result {
+                    if !taskAlive.load(Ordering::Acquire) {
+                        return;
+                    }
+                    AppLogger::e(TAG, &format!("detached JavaScript execution failed: {error}"));
+                }
+                taskScheduled.store(false, Ordering::Release);
+                if taskRequested.swap(false, Ordering::AcqRel) {
+                    if let Some(wake) = taskWakeSlot.lock().expect("background wake mutex poisoned").clone() {
+                        wake();
+                    }
+                }
+            }));
+            if let Err(error) = taskScheduler.scheduleHostRuntimeAsyncTask("operit-js-detached", task) {
+                scheduled.store(false, Ordering::Release);
+                AppLogger::e(TAG, &format!("schedule detached JavaScript execution failed: {error}"));
+            }
+        });
+        *backgroundWake.lock().expect("background wake mutex poisoned") = Some(wake);
+        Self { runtimeHost, stateHandle, alive }
     }
 
     /// Executes one JavaScript request through the host-owned state executor.
@@ -360,6 +428,9 @@ impl JsEngineWorker {
 
     /// Destroys the host-owned JavaScript runtime state.
     fn destroy(&self) {
+        if !self.alive.swap(false, Ordering::AcqRel) {
+            return;
+        }
         self.runtimeHost
             .destroyHostJavaScriptRuntimeState(self.stateHandle)
             .expect("JavaScript runtime state must be destroyed by the Host");
@@ -906,15 +977,18 @@ impl JsEngineState {
         runtime: Box<dyn HostJavaScriptRuntime>,
         executionHost: Option<Arc<dyn JsExecutionHost>>,
         toolPkgContext: Option<ToolPkgExecutionContext>,
+        backgroundWake: Arc<Mutex<Option<JsBackgroundWake>>>,
     ) -> Result<Self, String> {
         let (asyncCallbackSender, asyncCallbackReceiver) = mpsc::channel();
         let mut state = Self {
             runtime,
             asyncCallbackSender,
             asyncCallbackReceiver,
+            backgroundWake,
             executionHost,
             toolPkgContext,
             composeDslTextResources: None,
+            detachedCallContexts: BTreeMap::new(),
             jsEnvironmentInitialized: false,
         };
         state.registerNativeInterface()?;
@@ -1074,8 +1148,10 @@ impl JsEngineState {
             let executionScript = format!(
                 "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, {timeoutSec}, 10000);"
             );
-            self.evalJavaScriptVoid(&executionScript)
-                .map_err(JsExecutionError::runtime)?;
+            if let Err(error) = self.evalJavaScriptVoid(&executionScript) {
+                self.cancelJavaScriptExecution(&callId);
+                return Err(JsExecutionError::runtime(error));
+            }
             Ok(JsPendingScriptExecution {
                 callId,
                 context: context.clone(),
@@ -1093,23 +1169,37 @@ impl JsEngineState {
         let pending = started?;
         loop {
             installThreadLocalCallContext(&pending.context);
-            let polled = self.pollCooperativeScriptExecution(&pending);
+            let polled = match self.pollCooperativeScriptExecution(&pending) {
+                Ok(polled) => polled,
+                Err(error) => {
+                    clearThreadLocalCallState();
+                    self.cancelJavaScriptExecution(&pending.callId);
+                    return Err(error);
+                }
+            };
             clearThreadLocalCallState();
-            match polled? {
+            match polled {
                 JsScriptExecutionPoll::Complete(output) => {
                     if let Some(message) = extractJsExecutionErrorMessage(output.as_deref()) {
                         return Err(JsExecutionError::runtime(message));
                     }
+                    self.rememberDetachedCallContext(&pending)
+                        .map_err(JsExecutionError::runtime)?;
                     return Ok(output);
                 }
                 JsScriptExecutionPoll::Pending => {}
             }
-            let executionHost = pending.context.executionHost.clone().ok_or_else(|| {
-                JsExecutionError::worker_unavailable(
-                    "JavaScript execution host is unavailable for asynchronous execution",
-                )
-            })?;
+            let executionHost = match pending.context.executionHost.clone() {
+                Some(executionHost) => executionHost,
+                None => {
+                    self.cancelJavaScriptExecution(&pending.callId);
+                    return Err(JsExecutionError::worker_unavailable(
+                        "JavaScript execution host is unavailable for asynchronous execution",
+                    ));
+                }
+            };
             if let Err(error) = executionHost.wait_for_javascript_runtime_turn().await {
+                self.cancelJavaScriptExecution(&pending.callId);
                 return Err(JsExecutionError::worker_unavailable(error.to_string()));
             }
         }
@@ -1253,6 +1343,7 @@ impl JsEngineState {
                         callId, functionName, error
                     ),
                 );
+                self.cancelJavaScriptExecution(&callId);
                 clearNativeExecutionSession(&callId);
                 clearThreadLocalCallState();
                 return Err(JsExecutionError::runtime(error.to_string()));
@@ -1322,13 +1413,23 @@ impl JsEngineState {
             let executionScript = format!(
                 "__operitExecuteScriptFunction({callIdJson}, {paramsJson}, {scriptJson}, {functionNameJson}, 60, 10000);"
             );
-            self.evalJavaScriptVoid(&executionScript)
-                .map_err(JsExecutionError::runtime)?;
-            self.runJavaScriptJobs()
-                .map_err(JsExecutionError::runtime)?;
-            let output = readNativeExecutionSession(&callId).ok_or_else(|| {
-                JsExecutionError::runtime("ToolPkg registration JavaScript did not complete")
-            })?;
+            if let Err(error) = self.evalJavaScriptVoid(&executionScript) {
+                self.cancelJavaScriptExecution(&callId);
+                return Err(JsExecutionError::runtime(error));
+            }
+            if let Err(error) = self.runJavaScriptJobs() {
+                self.cancelJavaScriptExecution(&callId);
+                return Err(JsExecutionError::runtime(error));
+            }
+            let output = match readNativeExecutionSession(&callId) {
+                Some(output) => output,
+                None => {
+                    self.cancelJavaScriptExecution(&callId);
+                    return Err(JsExecutionError::runtime(
+                        "ToolPkg registration JavaScript did not complete",
+                    ));
+                }
+            };
             clearNativeExecutionSession(&callId);
             ensureRegistrationExecutionSucceeded(&output).map_err(JsExecutionError::runtime)?;
 
@@ -1371,6 +1472,120 @@ impl JsEngineState {
             .map_err(|error| error.to_string())
     }
 
+    /// Cancels one JavaScript call and releases its call-scoped callbacks and timers.
+    #[allow(non_snake_case)]
+    fn cancelJavaScriptExecution(&mut self, callId: &str) {
+        let callIdJson = match serde_json::to_string(callId) {
+            Ok(value) => value,
+            Err(error) => {
+                AppLogger::e(
+                    TAG,
+                    &format!("cancel JavaScript execution serialization failed: {error}"),
+                );
+                return;
+            }
+        };
+        let script = format!(
+            "if (typeof __operitCancelCallSession === 'function') {{ __operitCancelCallSession({callIdJson}); }}"
+        );
+        if let Err(error) = self.evalJavaScriptVoid(&script) {
+            AppLogger::e(
+                TAG,
+                &format!("cancel JavaScript execution failed callId={callId}: {error}"),
+            );
+        }
+    }
+
+    /// Advances detached JavaScript calls after their original request has returned.
+    fn advanceDetachedJavaScriptExecution(&mut self) -> Result<(), String> {
+        let ids = self
+            .evalJavaScriptString("JSON.stringify(typeof __operitGetDetachedCallIds === 'function' ? __operitGetDetachedCallIds() : [])")?;
+        let ids: Vec<String> = serde_json::from_str(&ids).map_err(|error| error.to_string())?;
+        let callbacks = ids
+            .iter()
+            .filter_map(|callId| {
+                self.detachedCallContexts
+                    .get(callId)
+                    .and_then(|context| context.intermediateCallback.clone())
+                    .map(|callback| (callId.clone(), callback))
+            })
+            .collect::<BTreeMap<_, _>>();
+        CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|current| {
+            *current.borrow_mut() = callbacks;
+        });
+        self.runJavaScriptJobs()?;
+        loop {
+            match self.asyncCallbackReceiver.try_recv() {
+                Ok(callback) => {
+                    self.deliverAsyncCallback(callback)?;
+                    self.runJavaScriptJobs()?;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => return Err("JavaScript asynchronous callback queue disconnected".to_string()),
+            }
+        }
+        for callId in ids {
+            let callIdJson = serde_json::to_string(&callId).map_err(|error| error.to_string())?;
+            let prepared = self.evalJavaScriptString(&format!(
+                "JSON.stringify(typeof __operitPrepareDetachedCall === 'function' && __operitPrepareDetachedCall({callIdJson}))"
+            ))?;
+            if prepared == "true" {
+                self.runJavaScriptJobs()?;
+            }
+        }
+        loop {
+            match self.asyncCallbackReceiver.try_recv() {
+                Ok(callback) => {
+                    self.deliverAsyncCallback(callback)?;
+                    self.runJavaScriptJobs()?;
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(
+                        "JavaScript asynchronous callback queue disconnected".to_string(),
+                    )
+                }
+            }
+        }
+        let activeIds = self
+            .evalJavaScriptString("JSON.stringify(typeof __operitGetDetachedCallIds === 'function' ? __operitGetDetachedCallIds() : [])")?;
+        let activeIds: Vec<String> = serde_json::from_str(&activeIds).map_err(|error| error.to_string())?;
+        let completedCallIds = self
+            .detachedCallContexts
+            .keys()
+            .filter(|callId| !activeIds.iter().any(|activeId| activeId == *callId))
+            .cloned()
+            .collect::<Vec<_>>();
+        for callId in completedCallIds {
+            let callIdJson = serde_json::to_string(&callId).map_err(|error| error.to_string())?;
+            self.evalJavaScriptVoid(&format!(
+                "if (typeof __operitFinalizeDetachedCall === 'function') {{ __operitFinalizeDetachedCall({callIdJson}); }}"
+            ))?;
+        }
+        self.detachedCallContexts
+            .retain(|callId, _| activeIds.iter().any(|activeId| activeId == callId));
+        CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|current| {
+            current.borrow_mut().clear();
+        });
+        Ok(())
+    }
+
+    /// Retains the callback context while a JavaScript call owns detached timers.
+    fn rememberDetachedCallContext(
+        &mut self,
+        pending: &JsPendingScriptExecution,
+    ) -> Result<(), String> {
+        let callIdJson = serde_json::to_string(&pending.callId).map_err(|error| error.to_string())?;
+        let detached = self.evalJavaScriptString(&format!(
+            "JSON.stringify((typeof __operitGetCallState === 'function' && __operitGetCallState({callIdJson}))?.detached === true)"
+        ))?;
+        if detached == "true" {
+            self.detachedCallContexts
+                .insert(pending.callId.clone(), pending.context.clone());
+        }
+        Ok(())
+    }
+
     #[allow(non_snake_case)]
     fn runJavaScriptJobs(&mut self) -> Result<(), String> {
         self.runtime
@@ -1392,13 +1607,16 @@ impl JsEngineState {
                 JsExecutionError::timeout("Script execution deadline exceeds host clock range")
             })?;
         loop {
-            self.runJavaScriptJobs()
-                .map_err(JsExecutionError::runtime)?;
+            if let Err(error) = self.runJavaScriptJobs() {
+                self.cancelJavaScriptExecution(callId);
+                return Err(JsExecutionError::runtime(error));
+            }
             if let Some(output) = readNativeExecutionSession(callId) {
                 return Ok(Some(output));
             }
             let nowMillis = currentTimeMillisU128();
             if nowMillis >= deadlineMillis {
+                self.cancelJavaScriptExecution(callId);
                 return Err(JsExecutionError::timeout(format!(
                     "Script execution timed out after {} milliseconds",
                     timeout.as_millis()
@@ -1412,11 +1630,15 @@ impl JsEngineState {
                     .expect("bounded JavaScript wait duration must fit in milliseconds"),
             );
             match self.asyncCallbackReceiver.recv_timeout(waitDuration) {
-                Ok(callback) => self
-                    .deliverAsyncCallback(callback)
-                    .map_err(JsExecutionError::runtime)?,
+                Ok(callback) => {
+                    if let Err(error) = self.deliverAsyncCallback(callback) {
+                        self.cancelJavaScriptExecution(callId);
+                        return Err(JsExecutionError::runtime(error));
+                    }
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    self.cancelJavaScriptExecution(callId);
                     return Err(JsExecutionError::worker_unavailable(
                         "JavaScript asynchronous callback queue disconnected",
                     ));
@@ -1625,6 +1847,16 @@ impl JsEngineState {
                 }),
             ),
             (
+                "__operitNativeGetToolCatalogJson",
+                Arc::new(|arguments| {
+                    let [] = exactHostJavaScriptArguments(
+                        "__operitNativeGetToolCatalogJson",
+                        arguments,
+                    )?;
+                    Ok(nativeGetToolCatalogJsonString())
+                }),
+            ),
+            (
                 "__operitNativeResolveToolName",
                 Arc::new(|arguments| {
                     let [packageName, subpackageId, toolName, preferImported] =
@@ -1718,8 +1950,12 @@ impl JsEngineState {
 
         let executionHost = self.executionHost.clone();
         let asyncCallbackSender = self.asyncCallbackSender.clone();
+        let backgroundWake = self.backgroundWake.clone();
         let asyncCallbackSink: JsAsyncCallbackSink = Arc::new(move |callback| {
             let _ = asyncCallbackSender.send(callback);
+            if let Some(wake) = backgroundWake.lock().expect("background wake mutex poisoned").clone() {
+                wake();
+            }
         });
         let toolExecutionHost = self.executionHost.clone();
         let toolAsyncCallbackSink = asyncCallbackSink.clone();
@@ -1749,6 +1985,16 @@ impl JsEngineState {
                     let [callId, error] =
                         exactHostJavaScriptArguments("__operitNativeSetCallError", arguments)?;
                     nativeSetCallErrorStrings(callId, error);
+                    Ok(())
+                }),
+            ),
+            (
+                "__operitNativeNotifyDetachedCall",
+                Arc::new(|arguments| {
+                    let [_callId] = exactHostJavaScriptArguments(
+                        "__operitNativeNotifyDetachedCall",
+                        arguments,
+                    )?;
                     Ok(())
                 }),
             ),
@@ -2079,6 +2325,9 @@ fn clearThreadLocalCallState() {
     });
     CURRENT_EXECUTION_LISTENER.with(|listener| {
         *listener.borrow_mut() = None;
+    });
+    CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|callbacks| {
+        callbacks.borrow_mut().clear();
     });
     CURRENT_ENV_OVERRIDES.with(|overrides| {
         overrides.borrow_mut().clear();
@@ -2415,6 +2664,9 @@ fn nativeCallToolStrings(toolType: String, toolName: String, paramsJson: String)
 
 #[allow(non_snake_case)]
 fn nativeSendIntermediateResultString(callId: String, result: String) {
+    let detachedCallback = CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|callbacks| {
+        callbacks.borrow().get(&callId).cloned()
+    });
     CURRENT_EXECUTION_LISTENER.with(|listener| {
         if let Some(listener) = listener.borrow().as_ref() {
             listener.on_intermediate_result(&callId, &result);
@@ -2422,6 +2674,10 @@ fn nativeSendIntermediateResultString(callId: String, result: String) {
     });
     CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
         if let Some(callback) = callback.borrow().as_ref() {
+            callback(result);
+            return;
+        }
+        if let Some(callback) = detachedCallback {
             callback(result);
         }
     });
@@ -2666,6 +2922,15 @@ fn nativeListImportedPackagesJsonString() -> String {
     currentExecutionHost()
         .and_then(|host| host.list_imported_packages())
         .and_then(|packages| serde_json::to_string(&packages).map_err(|error| error.to_string()))
+        .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
+}
+
+/// Returns the executable tool catalog exposed by the active host.
+#[allow(non_snake_case)]
+fn nativeGetToolCatalogJsonString() -> String {
+    currentExecutionHost()
+        .and_then(|host| host.get_tool_catalog())
+        .and_then(|catalog| serde_json::to_string(&catalog).map_err(|error| error.to_string()))
         .unwrap_or_else(|error| buildJsExecutionErrorPayload(&error))
 }
 

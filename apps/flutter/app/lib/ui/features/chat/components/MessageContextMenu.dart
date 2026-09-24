@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/interactions/MessagePressShield.dart';
+import '../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../util/ChatMarkupRegex.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'MessageCopyPreview.dart';
@@ -304,7 +305,8 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
             height: 36,
             child: Row(
               children: <Widget>[
-                const Icon(Icons.extension_outlined, size: 16),
+                if (item.icon != null)
+                  Icon(MaterialIconNameResolver.resolve(item.icon!), size: 16),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -405,7 +407,15 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     }
   }
 
-  /// Invokes a ToolPkg context-menu callback with the generated message JSON.
+  /// Builds the ToolPkg snapshot with text from the selected message parts.
+  Map<String, Object?> _toolPkgMessageSnapshot() {
+    return <String, Object?>{
+      ...widget.message.toJson(),
+      'content': widget.message.displayText,
+    };
+  }
+
+  /// Invokes a ToolPkg context-menu callback with the selected message snapshot.
   Future<void> _runToolPkgMenuItem(
     core_proxy.ToolPkgChatMessageMenuItem item,
   ) async {
@@ -414,7 +424,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
       itemId: item.itemId,
       chatId: widget.chatId,
       messageIndex: widget.messageIndex,
-      message: widget.message.toJson(),
+      message: _toolPkgMessageSnapshot(),
     );
     final dialog = item.dialog;
     if (dialog != null) {
@@ -438,7 +448,7 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     final state = <String, Object?>{
       'chatId': widget.chatId,
       'messageIndex': widget.messageIndex,
-      'message': widget.message.toJson(),
+      'message': _toolPkgMessageSnapshot(),
       'menuItemId': item.itemId,
     };
     final rawState = dialogResult['state'];
@@ -478,20 +488,15 @@ class _MessageContextMenuState extends State<MessageContextMenu> {
     }
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(dialogTitle),
-        content: SizedBox(
-          width: 760,
-          height: 640,
-          child: ToolPkgUiLauncherScreen(
-            clients: widget.clients,
-            plugin: plugin,
-            initialRouteId: dialog.screen,
-            showLauncherChrome: false,
-            initialState: state,
-            initialModuleSpec: moduleSpec,
-          ),
-        ),
+      barrierDismissible: false,
+      builder: (context) => ToolPkgUiLauncherScreen(
+        clients: widget.clients,
+        plugin: plugin,
+        initialRouteId: dialog.screen,
+        showLauncherChrome: false,
+        dialogTitle: dialogTitle,
+        initialState: state,
+        initialModuleSpec: moduleSpec,
       ),
     );
   }

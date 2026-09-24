@@ -90,9 +90,14 @@ list(APPEND OPERIT_RUSTUP_ENV "RUSTUP_TOOLCHAIN=${OPERIT_RUSTUP_TOOLCHAIN}")
 # SDK code generator on every Flutter build.
 file(GLOB_RECURSE OPERIT_PLUGIN_SYNC_INPUTS CONFIGURE_DEPENDS
   "${OPERIT_REPO_ROOT}/plugins/packages/buildin/*"
+  "${OPERIT_REPO_ROOT}/plugins/packages/external/*"
+  "${OPERIT_REPO_ROOT}/plugins/types/*"
   "${OPERIT_REPO_ROOT}/core/crates/plugin/codegen/*"
   "${OPERIT_REPO_ROOT}/core/crates/plugin/sdk/*"
 )
+# Node package contents are not inputs to the Python plugin synchronizer.
+# Keeping pnpm's package links out of DEPENDS avoids stale/missing node_modules paths in MSBuild.
+list(FILTER OPERIT_PLUGIN_SYNC_INPUTS EXCLUDE REGEX "(^|[/\\\\])node_modules([/\\\\]|$)")
 list(APPEND OPERIT_PLUGIN_SYNC_INPUTS
   "${OPERIT_PLUGIN_SYNC_SCRIPT}"
   "${OPERIT_REPO_ROOT}/core/Cargo.toml"
@@ -102,7 +107,7 @@ set(OPERIT_PLUGIN_SYNC_STAMP
   "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/sync_operit_plugins-$<CONFIG>.stamp")
 add_custom_command(OUTPUT "${OPERIT_PLUGIN_SYNC_STAMP}"
   COMMAND ${CMAKE_COMMAND} -E env ${OPERIT_RUSTUP_ENV}
-    "${OPERIT_PLUGIN_SYNC_PYTHON}" "${OPERIT_PLUGIN_SYNC_SCRIPT}" --source buildin
+    "${OPERIT_PLUGIN_SYNC_PYTHON}" "${OPERIT_PLUGIN_SYNC_SCRIPT}" --source runtime --no-hot-reload
   WORKING_DIRECTORY "${OPERIT_REPO_ROOT}"
   COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles"
   COMMAND "${CMAKE_COMMAND}" -E touch "${OPERIT_PLUGIN_SYNC_STAMP}"
@@ -143,6 +148,11 @@ list(APPEND OPERIT_NATIVE_INPUTS
   "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.toml"
   "${OPERIT_FLUTTER_BRIDGE_CRATE}/Cargo.lock"
 )
+# Embedded plugin bytes must invalidate the copied bridge DLL when repackaged.
+file(GLOB_RECURSE OPERIT_PLUGIN_ASSET_INPUTS CONFIGURE_DEPENDS
+  "${OPERIT_REPO_ROOT}/core/crates/runtime/application/assets/plugins/*"
+)
+list(APPEND OPERIT_NATIVE_INPUTS ${OPERIT_PLUGIN_ASSET_INPUTS})
 set(OPERIT_FLUTTER_BRIDGE_OUTPUT_DLL
   "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/operit_flutter_bridge.dll")
 set(OPERIT_FLUTTER_BRIDGE_STAMP
@@ -166,6 +176,7 @@ add_custom_command(
   # previous DLL during the copy step.
   COMMAND "${CMAKE_COMMAND}" -E touch "${OPERIT_FLUTTER_BRIDGE_STAMP}"
   DEPENDS
+    "${OPERIT_PLUGIN_SYNC_STAMP}"
     "${CMAKE_CURRENT_SOURCE_DIR}/operit_flutter_bridge_build.cmake"
     ${OPERIT_NATIVE_INPUTS}
   COMMENT "Building the Operit Flutter Rust bridge"

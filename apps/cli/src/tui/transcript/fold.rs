@@ -41,6 +41,7 @@ pub(super) struct FoldRenderContext<'a> {
 /// Holds rendered lines together with clickable fold hit regions.
 #[derive(Clone, Debug, Default)]
 pub(super) struct FoldedLines {
+    pub(super) xml: Vec<super::compose::XmlSurfaceSlot>,
     pub(super) lines: Vec<ratatui::text::Line<'static>>,
     pub(super) hits: Vec<TranscriptFoldHit>,
 }
@@ -153,6 +154,10 @@ impl FoldedLines {
     /// Appends another folded block while shifting its hit line indexes.
     pub(super) fn extend(&mut self, other: FoldedLines) {
         let offset = self.lines.len();
+        for mut slot in other.xml {
+            slot.lines = slot.lines.start + offset..slot.lines.end + offset;
+            self.xml.push(slot);
+        }
         for mut hit in other.hits {
             hit.line_index += offset;
             self.hits.push(hit);

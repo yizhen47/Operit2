@@ -247,6 +247,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
             warn: function() {{ NativeInterface.logWarningForCall('', Array.prototype.slice.call(arguments).join(' ')); }},
             error: function() {{ NativeInterface.logErrorForCall('', Array.prototype.slice.call(arguments).join(' ')); }}
         }};
+        var intervalStates = {{}};
         var NativeInterface = {{
             callTool: function(toolType, toolName, paramsJson) {{
                 return __operitNativeCallTool(String(toolType || 'default'), String(toolName || ''), String(paramsJson || '{{}}'));
@@ -268,30 +269,101 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 }}
                 var timerId = '__operit_timer_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
                 var timerArguments = Array.prototype.slice.call(arguments, 2);
+                var timerCallId = String(globalThis.__operitCurrentCallId || '');
                 window[timerId] = function() {{
                     try {{
                         delete window[timerId];
                     }} catch (_deleteTimerError) {{
                         window[timerId] = undefined;
                     }}
-                    handler.apply(window, timerArguments);
+                    if (typeof __operitActivateCall === 'function') {{
+                        __operitActivateCall(timerCallId);
+                    }}
+                    try {{
+                        handler.apply(window, timerArguments);
+                    }} catch (error) {{
+                        var activeRuntime = globalThis.__operit_call_runtime_ref;
+                        if (
+                            activeRuntime &&
+                            activeRuntime.callId === timerCallId &&
+                            typeof activeRuntime.fail === 'function'
+                        ) {{
+                            activeRuntime.fail(error);
+                        }}
+                    }} finally {{
+                        Promise.resolve().then(function() {{
+                            if (typeof __operitUnregisterCallTimer === 'function') {{
+                                __operitUnregisterCallTimer(timerCallId, timerId);
+                            }}
+                        }});
+                    }}
                 }};
+                window[timerId].__operitTimerCallId = timerCallId;
                 var normalizedDelay = Number(delayMs);
                 if (!isFinite(normalizedDelay) || normalizedDelay < 0) {{
                     throw new RangeError('setTimeout delay must be a finite non-negative number');
                 }}
-                __operitNativeScheduleJavaScriptTimer(timerId, String(Math.floor(normalizedDelay)));
+                if (typeof __operitRegisterCallTimer === 'function') {{
+                    __operitRegisterCallTimer(timerCallId, timerId);
+                }}
+                try {{
+                    __operitNativeScheduleJavaScriptTimer(timerId, String(Math.floor(normalizedDelay)));
+                }} catch (error) {{
+                    delete window[timerId];
+                    if (typeof __operitUnregisterCallTimer === 'function') {{
+                        __operitUnregisterCallTimer(timerCallId, timerId);
+                    }}
+                    throw error;
+                }}
                 return timerId;
             }},
             clearTimeout: function(timerId) {{
                 var normalizedTimerId = String(timerId || '');
                 if (normalizedTimerId) {{
+                    var timerCallback = window[normalizedTimerId];
+                    var timerCallId;
+                    if (timerCallback && typeof timerCallback.__operitTimerCallId === 'string') {{
+                        timerCallId = timerCallback.__operitTimerCallId;
+                    }}
                     try {{
                         delete window[normalizedTimerId];
                     }} catch (_deleteTimerError) {{
                         window[normalizedTimerId] = undefined;
                     }}
+                    if (timerCallId && typeof __operitUnregisterCallTimer === 'function') {{
+                        __operitUnregisterCallTimer(timerCallId, normalizedTimerId);
+                    }}
                 }}
+            }},
+            setInterval: function(handler, delayMs) {{
+                if (typeof handler !== 'function') {{
+                    throw new TypeError('setInterval handler must be a function');
+                }}
+                var intervalId = '__operit_interval_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+                var timerArguments = Array.prototype.slice.call(arguments, 2);
+                var state = {{ active: true, timerId: null }};
+                intervalStates[intervalId] = state;
+                var scheduleNext = function() {{
+                    if (!state.active) return;
+                    state.timerId = NativeInterface.setTimeout(function() {{
+                        if (!state.active) return;
+                        try {{
+                            handler.apply(window, timerArguments);
+                        }} finally {{
+                            scheduleNext();
+                        }}
+                    }}, delayMs);
+                }};
+                scheduleNext();
+                return intervalId;
+            }},
+            clearInterval: function(intervalId) {{
+                var normalizedIntervalId = String(intervalId || '');
+                var state = intervalStates[normalizedIntervalId];
+                if (!state) return;
+                state.active = false;
+                if (state.timerId) NativeInterface.clearTimeout(state.timerId);
+                delete intervalStates[normalizedIntervalId];
             }},
             /// Forwards plugin informational output to the shared application logger.
             logInfoForCall: function(callId, message) {{
@@ -394,6 +466,10 @@ pub fn buildRuntimeBootstrapScript() -> String {
             listImportedPackagesJson: function() {{
                 return __operitNativeListImportedPackagesJson();
             }},
+            /** Returns host-owned executable tool schemas as JSON. */
+            getToolCatalogJson: function() {{
+                return __operitNativeGetToolCatalogJson();
+            }},
             resolveToolName: function(packageName, subpackageId, toolName, preferImported) {{
                 return __operitNativeResolveToolName(
                     String(packageName || ''),
@@ -487,6 +563,8 @@ pub fn buildRuntimeBootstrapScript() -> String {
 
         var setTimeout = NativeInterface.setTimeout;
         var clearTimeout = NativeInterface.clearTimeout;
+        var setInterval = NativeInterface.setInterval;
+        var clearInterval = NativeInterface.clearInterval;
 
         {}
 
@@ -556,6 +634,22 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 parsed = raw;
             }}
             return __operitParseToolResult(parsed, false);
+        }}
+
+        /** Returns the host-owned executable tool catalog for workflow editors. */
+        function getToolCatalog() {{
+            var raw = NativeInterface.getToolCatalogJson();
+            var catalog = JSON.parse(raw);
+            if (!catalog) {{
+                throw new Error('Tool catalog request returned no response');
+            }}
+            if (catalog.success === false) {{
+                throw new Error(String(catalog.message || 'Tool catalog request failed'));
+            }}
+            if (!Array.isArray(catalog.tools)) {{
+                throw new Error('Tool catalog response must contain a tools array');
+            }}
+            return catalog;
         }}
 
         globalThis.__operitCompleteCalled = false;
@@ -873,6 +967,8 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 return;
             }}
             var callState = registerCallSession(callId, params);
+            callState.previousCallId = previousCallId;
+            callState.previousCallRuntime = previousCallRuntime;
             globalThis.__operitCurrentCallId = callId;
             function getCallState() {{
                 return typeof globalThis.__operitGetCallState === 'function'
@@ -891,13 +987,18 @@ pub fn buildRuntimeBootstrapScript() -> String {
                         delete globalThis.__operit_call_runtime_ref;
                     }}
                 }}
-                if (typeof globalThis.__operitCleanupCallSession === 'function') {{
+                if (callState.pendingReferences > 0) {{
+                    callState.detached = true;
+                    if (typeof globalThis.__operitNotifyDetachedCall === 'function') {{
+                        globalThis.__operitNotifyDetachedCall(callId);
+                    }}
+                }} else if (typeof globalThis.__operitCleanupCallSession === 'function') {{
                     globalThis.__operitCleanupCallSession(callId);
                 }}
             }}
             function isActive() {{
                 var state = getCallState();
-                return !!(state && !state.completed);
+                return !!(state && (!state.completed || state.detached));
             }}
             function readCallValue(key, defaultValue) {{
                 var state = getCallState();
@@ -946,26 +1047,34 @@ pub fn buildRuntimeBootstrapScript() -> String {
             }}
             function completeCall(resultText) {{
                 var state = getCallState();
-                if (!state || state.completed) {{
+                if (!state || state.resultCompleted) {{
                     return;
                 }}
-                state.completed = true;
-                NativeInterface.logJsExecutionTrace(callId, 'complete ' + __operitText(resultText).slice(0, 240));
-                NativeInterface.setCallResult(callId, resultText);
-                finalizeCall();
+                state.resultCompleted = true;
+                state.completed = Number(state.pendingReferences || 0) <= 0;
+                try {{
+                    NativeInterface.logJsExecutionTrace(callId, 'complete ' + __operitText(resultText).slice(0, 240));
+                    NativeInterface.setCallResult(callId, resultText);
+                }} finally {{
+                    finalizeCall();
+                }}
             }}
             function emitError(message) {{
                 var state = getCallState();
-                if (!state || state.completed) {{
+                if (!state || state.resultCompleted) {{
                     return;
                 }}
-                state.completed = true;
-                NativeInterface.logJsExecutionTrace(callId, 'error ' + __operitText(message).slice(0, 240));
-                NativeInterface.setCallError(callId, JSON.stringify({{
-                    success: false,
-                    message: __operitText(message)
-                }}));
-                finalizeCall();
+                state.resultCompleted = true;
+                state.completed = Number(state.pendingReferences || 0) <= 0;
+                try {{
+                    NativeInterface.logJsExecutionTrace(callId, 'error ' + __operitText(message).slice(0, 240));
+                    NativeInterface.setCallError(callId, JSON.stringify({{
+                        success: false,
+                        message: __operitText(message)
+                    }}));
+                }} finally {{
+                    finalizeCall();
+                }}
             }}
             function callRuntimeReport(error, context) {{
                 if (typeof globalThis.__operitReportDetailedErrorForCall === 'function') {{
@@ -1038,6 +1147,13 @@ pub fn buildRuntimeBootstrapScript() -> String {
                     return typeof path === 'string' ? path : '';
                 }},
                 reportDetailedError: callRuntimeReport,
+                fail: function(error) {{
+                    var report = callRuntimeReport(error, 'Asynchronous Callback');
+                    var message = report && report.details && report.details.message
+                        ? report.details.message
+                        : __operitText(error && error.message ? error.message : error);
+                    emitError(message || 'Asynchronous callback failed');
+                }},
                 handleAsync: function(value) {{
                     if (!value || typeof value.then !== 'function') {{
                         return false;
@@ -1066,6 +1182,7 @@ pub fn buildRuntimeBootstrapScript() -> String {
                 }},
                 console: console
             }};
+            callState.callRuntime = callRuntime;
             globalThis.__operit_call_runtime_ref = callRuntime;
             try {{
                 var registrationMode = __operitToBoolean(readCallValue('__operit_registration_mode', false));
@@ -1363,7 +1480,14 @@ pub fn buildRuntimeBootstrapScript() -> String {
                                 Date.now() +
                                 '_' +
                                 Math.random().toString(36).slice(2, 10);
+                            var ownerCallId = String(globalThis.__operitCurrentCallId || '');
+                            if (typeof globalThis.__operitRetainCallReference === 'function') {{
+                                globalThis.__operitRetainCallReference(ownerCallId);
+                            }}
                             globalThis[callbackId] = function(resultJson, isError) {{
+                                if (typeof globalThis.__operitActivateCall === 'function') {{
+                                    globalThis.__operitActivateCall(ownerCallId);
+                                }}
                                 try {{
                                     delete globalThis[callbackId];
                                 }} catch (_deleteCallbackError) {{
@@ -1371,6 +1495,11 @@ pub fn buildRuntimeBootstrapScript() -> String {
                                 }}
                                 if (isError) {{
                                     reject(new Error(__operitText(resultJson).trim() || 'ToolPkg.ipc call failed'));
+                                    Promise.resolve().then(function() {{
+                                        if (typeof globalThis.__operitReleaseCallReference === 'function') {{
+                                            globalThis.__operitReleaseCallReference(ownerCallId);
+                                        }}
+                                    }});
                                     return;
                                 }}
                                 var parsed;
@@ -1397,22 +1526,32 @@ pub fn buildRuntimeBootstrapScript() -> String {
                                     reject(
                                         new Error(
                                             'ToolPkg.ipc returned invalid JSON: ' +
-                                                __operitText(error && error.message ? error.message : error)
+                                            __operitText(error && error.message ? error.message : error)
                                         )
                                     );
+                                    Promise.resolve().then(function() {{
+                                        if (typeof globalThis.__operitReleaseCallReference === 'function') {{
+                                            globalThis.__operitReleaseCallReference(ownerCallId);
+                                        }}
+                                    }});
                                     return;
                                 }}
                                 if (parsed && parsed.success === true) {{
                                     resolve(parsed.value);
-                                    return;
+                                }} else {{
+                                    reject(
+                                        new Error(
+                                            parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0
+                                                ? parsed.message.trim()
+                                                : 'ToolPkg.ipc call failed'
+                                        )
+                                    );
                                 }}
-                                reject(
-                                    new Error(
-                                        parsed && typeof parsed.message === 'string' && parsed.message.trim().length > 0
-                                            ? parsed.message.trim()
-                                            : 'ToolPkg.ipc call failed'
-                                    )
-                                );
+                                Promise.resolve().then(function() {{
+                                    if (typeof globalThis.__operitReleaseCallReference === 'function') {{
+                                        globalThis.__operitReleaseCallReference(ownerCallId);
+                                    }}
+                                }});
                             }};
                             try {{
                                 NativeInterface.invokeToolPkgIpcAsync(
@@ -1431,6 +1570,11 @@ pub fn buildRuntimeBootstrapScript() -> String {
                                     globalThis[callbackId] = undefined;
                                 }}
                                 reject(error);
+                                Promise.resolve().then(function() {{
+                                    if (typeof globalThis.__operitReleaseCallReference === 'function') {{
+                                        globalThis.__operitReleaseCallReference(ownerCallId);
+                                    }}
+                                }});
                             }}
                         }});
                     }};

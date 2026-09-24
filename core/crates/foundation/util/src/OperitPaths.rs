@@ -52,6 +52,7 @@ pub const USER_PREFERENCES_PATH: &str = Layout::USER_PREFERENCES_PATH;
 pub const API_PREFERENCES_PATH: &str = Layout::API_PREFERENCES_PATH;
 pub const ENV_PREFERENCES_PATH: &str = Layout::ENV_PREFERENCES_PATH;
 pub const GITHUB_AUTH_PREFERENCES_PATH: &str = Layout::GITHUB_AUTH_PREFERENCES_PATH;
+pub const CODEX_AUTH_PREFERENCES_PATH: &str = Layout::CODEX_AUTH_PREFERENCES_PATH;
 pub const MODEL_CONFIGS_PREFERENCES_PATH: &str = Layout::MODEL_CONFIGS_PREFERENCES_PATH;
 pub const FUNCTIONAL_CONFIGS_PREFERENCES_PATH: &str = Layout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH;
 pub const PACKAGE_MANAGER_PREFERENCES_PATH: &str = Layout::PACKAGE_MANAGER_PREFERENCES_PATH;
@@ -211,6 +212,11 @@ pub fn envPreferencesPath() -> Result<PathBuf, String> {
 #[allow(non_snake_case)]
 pub fn githubAuthPreferencesPath() -> Result<PathBuf, String> {
     relativeFile(GITHUB_AUTH_PREFERENCES_PATH)
+}
+
+#[allow(non_snake_case)]
+pub fn codexAuthPreferencesPath() -> Result<PathBuf, String> {
+    relativeFile(CODEX_AUTH_PREFERENCES_PATH)
 }
 
 #[allow(non_snake_case)]

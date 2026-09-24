@@ -50,6 +50,11 @@ impl CoreCommandOutput {
         self.stderr.push('\n');
     }
 
+    /// Appends raw command error text.
+    pub fn push_stderr(&mut self, value: impl AsRef<str>) {
+        self.stderr.push_str(value.as_ref());
+    }
+
     /// Finalizes the explicit JSON document returned to the caller.
     pub fn finalizeJson(&mut self) -> Result<(), String> {
         if !self.jsonMode {

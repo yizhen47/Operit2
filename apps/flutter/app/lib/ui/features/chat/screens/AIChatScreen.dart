@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 
+import '../../../../core/link/CoreLinkProtocol.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../data/preferences/UserPreferencesManager.dart';
@@ -15,6 +16,7 @@ import '../../../main/TopBarController.dart';
 import '../../../main/components/TopBarTitleText.dart';
 import '../PendingChatDraftHandler.dart';
 import '../components/ChatScreenContent.dart';
+import '../components/ChatRuntimeScope.dart';
 import '../components/MessageEditorDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
@@ -138,6 +140,7 @@ class _ChatContentData {
     required this.isPreparingChatSwitch,
     required this.pendingQueueMessages,
     required this.isPendingQueueExpanded,
+    required this.toolPermissionRequests,
     required this.attachments,
     required this.isSpeechRecording,
     required this.isSpeechTranscribing,
@@ -158,6 +161,8 @@ class _ChatContentData {
   final bool isPreparingChatSwitch;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
+  final List<core_proxy.RuntimeHostInteractionToolPermissionRequest>
+  toolPermissionRequests;
   final List<AttachmentInfo> attachments;
   final bool isSpeechRecording;
   final bool isSpeechTranscribing;
@@ -192,6 +197,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   core_proxy.InputProcessingState _inputProcessingState =
       core_proxy.InputProcessingState.idle();
   String? _errorMessage;
+  Object? _chatFlowError;
+  String? _chatFlowErrorMessage;
   StreamSubscription<String?>? _currentChatIdSubscription;
   StreamSubscription<List<ChatUiMessage>>? _messagesSubscription;
   StreamSubscription<core_proxy.ChatState>? _chatStateSubscription;
@@ -228,6 +235,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   bool _isApplyingChatDraft = false;
   bool _isSpeechRecording = false;
   bool _isSpeechTranscribing = false;
+  List<core_proxy.RuntimeHostInteractionToolPermissionRequest>
+  _toolPermissionRequests =
+      const <core_proxy.RuntimeHostInteractionToolPermissionRequest>[];
   bool _showMentionSuggestionPanel = false;
   String _mentionSearchQuery = '';
   String? _mentionSuggestionTriggerChar;
@@ -301,7 +311,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _mainLayoutController?.clearAttachment(owner: _mainLayoutOwner);
     super.dispose();
   }
-
 
   /// Loads the global long-paste conversion settings used by this chat surface.
   Future<void> _loadLongPastedTextInputSettings() async {
@@ -1162,6 +1171,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return;
     }
     _requestedChatFlowChatId = chatId;
+    _clearChatFlowError();
     final generation = ++_chatFlowBindingGeneration;
     unawaited(_rebindChatFlows(chatId, generation));
   }
@@ -1202,39 +1212,43 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (chatId == null || chatId.isEmpty) {
       return;
     }
-    _messagesSubscription = _viewModel.watchMessages(chatId).listen(
-      (messages) {
-        if (generation == _chatFlowBindingGeneration &&
-            _requestedChatFlowChatId == chatId) {
-          _applyMessages(messages);
-        }
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        _handleBoundChatFlowError(
-          error: error,
-          stackTrace: stackTrace,
-          chatId: chatId,
-          generation: generation,
+    _messagesSubscription = _viewModel
+        .watchMessages(chatId)
+        .listen(
+          (messages) {
+            if (generation == _chatFlowBindingGeneration &&
+                _requestedChatFlowChatId == chatId) {
+              _applyMessages(messages);
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            _handleBoundChatFlowError(
+              error: error,
+              stackTrace: stackTrace,
+              chatId: chatId,
+              generation: generation,
+            );
+          },
         );
-      },
-    );
-    _chatStateSubscription = _viewModel.watchChatState(chatId).listen(
-      (state) {
-        if (generation == _chatFlowBindingGeneration &&
-            _requestedChatFlowChatId == chatId &&
-            state.currentChatId == chatId) {
-          _applyChatState(state);
-        }
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        _handleBoundChatFlowError(
-          error: error,
-          stackTrace: stackTrace,
-          chatId: chatId,
-          generation: generation,
+    _chatStateSubscription = _viewModel
+        .watchChatState(chatId)
+        .listen(
+          (state) {
+            if (generation == _chatFlowBindingGeneration &&
+                _requestedChatFlowChatId == chatId &&
+                state.currentChatId == chatId) {
+              _applyChatState(state);
+            }
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            _handleBoundChatFlowError(
+              error: error,
+              stackTrace: stackTrace,
+              chatId: chatId,
+              generation: generation,
+            );
+          },
         );
-      },
-    );
   }
 
   /// Applies a message-window change without changing chat execution state.
@@ -1242,7 +1256,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (!mounted) {
       return;
     }
-    _errorMessage = null;
     _messages
       ..clear()
       ..addAll(messages);
@@ -1281,7 +1294,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _pendingChatSwitchTargetId = request.chatId;
     _setAutoScrollToBottom(true);
     _mutateChatContentData(() {
-      _errorMessage = null;
+      _clearChatFlowError();
       _isPreparingChatSwitch = true;
       _isMultiSelectMode = false;
       _selectedMessageTimestamps = const <int>{};
@@ -1303,16 +1316,24 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _selectedMessageTimestamps = const <int>{};
       _restoreInputDraftForChat(state.currentChatId);
     }
-    _errorMessage = null;
     _currentChatTitle = state.currentChatTitle;
     _currentCharacterCardName = state.currentCharacterCardName;
     _currentCharacterCardAvatarUri = state.currentCharacterCardAvatarUri;
     _currentWorkspacePath = state.currentWorkspacePath;
-    _loading = state.isLoading;
-    _inputProcessingState = state.inputProcessingState;
+    final chatFlowErrorMessage = _chatFlowErrorMessage;
+    if (_chatFlowError != null) {
+      _loading = false;
+      _inputProcessingState = core_proxy.InputProcessingState.error(
+        message: chatFlowErrorMessage!,
+      );
+    } else {
+      _loading = state.isLoading;
+      _inputProcessingState = state.inputProcessingState;
+    }
     _hasOlderDisplayHistory = state.hasOlderDisplayHistory;
     _hasNewerDisplayHistory = state.hasNewerDisplayHistory;
     _isLoadingDisplayWindow = state.isLoadingDisplayWindow;
+    _toolPermissionRequests = state.toolPermissionRequests;
     if (_pendingChatSwitchTargetId == state.currentChatId) {
       _pendingChatSwitchTargetId = null;
       _isPreparingChatSwitch = false;
@@ -1331,6 +1352,13 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _syncPendingQueueAfterSnapshot();
   }
 
+  /// Clears the terminal error owned by the active chat-flow binding.
+  void _clearChatFlowError() {
+    _chatFlowError = null;
+    _chatFlowErrorMessage = null;
+    _errorMessage = null;
+  }
+
   /// Surfaces an unrecoverable routed-flow failure to this chat surface.
   void _handleChatFlowError(Object error, StackTrace stackTrace) {
     ClientLogger.e(
@@ -1342,8 +1370,25 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (!mounted) {
       return;
     }
-    _errorMessage = error.toString();
+    final routePermissionDenied =
+        error is CoreLinkError && error.isRoutePermissionDenied;
+    final errorMessage = routePermissionDenied
+        ? AppLocalizations.of(context)!.chatRoutePermissionDenied(
+            error.targetNodeId!,
+            error.requiredCapability!,
+          )
+        : error is CoreLinkError
+        ? error.message
+        : error.toString();
+    _chatFlowError = error;
+    _chatFlowErrorMessage = errorMessage;
+    _errorMessage = errorMessage;
     _loading = false;
+    if (routePermissionDenied) {
+      _inputProcessingState = core_proxy.InputProcessingState.error(
+        message: errorMessage,
+      );
+    }
     _publishChatContentData();
   }
 
@@ -1360,6 +1405,19 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return;
     }
     _handleChatFlowError(error, stackTrace);
+  }
+
+  /// Sends one chat-scoped permission decision through the chat view model.
+  Future<void> _respondToToolPermission(
+    String chatId,
+    String requestId,
+    ChatToolPermissionResult result,
+  ) {
+    return _viewModel.respondToolPermissionRequest(
+      chatId: chatId,
+      requestId: requestId,
+      result: result,
+    );
   }
 
   void _sendMessage() {
@@ -1531,10 +1589,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (_currentChatId != chatId) {
       return;
     }
+    _clearChatFlowError();
     _mutateChatContentData(() {
       _autoScrollToBottom = true;
       _autoScrollToBottomNotifier.value = true;
-      _errorMessage = null;
       _loading = true;
       _inputProcessingState = core_proxy.InputProcessingState.processing(
         message: 'message_processing',
@@ -1949,7 +2007,11 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   @override
   Widget build(BuildContext context) {
     if (widget.embedded) {
-      return _buildChatContent();
+      return ChatRuntimeScope(
+        chatCore: _viewModel.chatCore,
+        chatId: _currentChatId,
+        child: _buildChatContent(),
+      );
     }
     _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
     final useMainLayoutWorkspace =
@@ -1959,24 +2021,33 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     );
     final content = _buildChatContent();
     if (useMainLayoutWorkspace) {
-      return content;
+      return ChatRuntimeScope(
+        chatCore: _viewModel.chatCore,
+        chatId: _currentChatId,
+        child: content,
+      );
     }
-    return WorkspaceShell(
-      workspaceOpen: _workspaceOpen,
-      onWorkspaceOpenChanged: _setWorkspaceOpen,
-      currentChatId: _currentChatId,
-      hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
-      workspacePath: _currentWorkspacePath,
-      onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
-      onListWorkspaceBindingDirectories:
-          _viewModel.listWorkspaceBindingDirectories,
-      onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
-      onReadWorkspaceFileBytes: _viewModel.readWorkspaceFileBytes,
-      onWriteWorkspaceFileBytes: _viewModel.writeWorkspaceFileBytes,
-      onOpenWorkspaceFile: _viewModel.openWorkspaceFile,
-      onCreateWorkspace: _createWorkspace,
-      onBindWorkspace: _bindWorkspace,
-      child: content,
+    return ChatRuntimeScope(
+      chatCore: _viewModel.chatCore,
+      chatId: _currentChatId,
+      child: WorkspaceShell(
+        workspaceOpen: _workspaceOpen,
+        onWorkspaceOpenChanged: _setWorkspaceOpen,
+        currentChatId: _currentChatId,
+        hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
+        workspacePath: _currentWorkspacePath,
+        chatCore: _viewModel.chatCore,
+        onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
+        onListWorkspaceBindingDirectories:
+            _viewModel.listWorkspaceBindingDirectories,
+        onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
+        onReadWorkspaceFileBytes: _viewModel.readWorkspaceFileBytes,
+        onWriteWorkspaceFileBytes: _viewModel.writeWorkspaceFileBytes,
+        onOpenWorkspaceFile: _viewModel.openWorkspaceFile,
+        onCreateWorkspace: _createWorkspace,
+        onBindWorkspace: _bindWorkspace,
+        child: content,
+      ),
     );
   }
 
@@ -2081,6 +2152,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           onCancelMessage: _cancelMessage,
           pendingQueueMessages: data.pendingQueueMessages,
           isPendingQueueExpanded: data.isPendingQueueExpanded,
+          toolPermissionRequests: data.toolPermissionRequests,
+          onToolPermissionDecision: _respondToToolPermission,
           onPendingQueueExpandedChange: _setPendingQueueExpanded,
           onDeletePendingQueueMessage: _deletePendingQueueMessage,
           onEditPendingQueueMessage: _editPendingQueueMessage,
@@ -2189,6 +2262,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       currentChatId: _currentChatId,
       hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
       workspacePath: _currentWorkspacePath,
+      chatCore: _viewModel.chatCore,
       onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
       onListWorkspaceBindingDirectories:
           _viewModel.listWorkspaceBindingDirectories,
@@ -2253,6 +2327,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         pendingQueueMessages,
       ),
       isPendingQueueExpanded: isPendingQueueExpanded,
+      toolPermissionRequests:
+          List<
+            core_proxy.RuntimeHostInteractionToolPermissionRequest
+          >.unmodifiable(_toolPermissionRequests),
       attachments: List<AttachmentInfo>.unmodifiable(_attachments),
       isSpeechRecording: _isSpeechRecording,
       isSpeechTranscribing: _isSpeechTranscribing,

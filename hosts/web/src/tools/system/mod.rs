@@ -2,7 +2,7 @@ use js_sys::{Array, Reflect};
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeEntry, AppUsageTimeResultData, DeviceInfoData,
     HostResult, LocationData, NotificationData, NotificationEntry, OCRLanguage, OCRQuality,
-    SystemNotificationRequest, SystemOperationHost, SystemSettingData,
+    SystemNotificationRequest, SystemOperationHost, SystemSettingData, ToastHost,
 };
 use wasm_bindgen::prelude::*;
 
@@ -24,14 +24,17 @@ impl WebSystemOperationHost {
     }
 }
 
-impl SystemOperationHost for WebSystemOperationHost {
-    fn getSystemLanguageCode(&self) -> HostResult<String> {
-        read_string_property(&call_system("getSystemLanguageCode", &[])?, "languageCode")
-    }
-
+impl ToastHost for WebSystemOperationHost {
+    /// Presents one toast through the browser application host.
     fn toast(&self, message: &str) -> HostResult<()> {
         call_system("toast", &[JsValue::from_str(message)])?;
         Ok(())
+    }
+}
+
+impl SystemOperationHost for WebSystemOperationHost {
+    fn getSystemLanguageCode(&self) -> HostResult<String> {
+        read_string_property(&call_system("getSystemLanguageCode", &[])?, "languageCode")
     }
 
     fn sendNotification(&self, request: &SystemNotificationRequest) -> HostResult<()> {

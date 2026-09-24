@@ -2734,6 +2734,32 @@ export interface RowProps extends ComposeCommonProps {
 }
 
 /**
+ * Properties for laying out child nodes horizontally across multiple lines.
+ */
+export interface FlowRowProps extends ComposeCommonProps {
+  /**
+   * Child nodes placed from start to end and continued on a new line when needed.
+   */
+  content?: ComposeChildren;
+  /**
+   * Distribution of children across each horizontal line.
+   */
+  horizontalArrangement?: ComposeArrangement;
+  /**
+   * Distribution of completed lines within the flow row height.
+   */
+  verticalArrangement?: ComposeArrangement;
+  /**
+   * Vertical alignment of children within each horizontal line.
+   */
+  itemVerticalAlignment?: ComposeAlignment;
+  /**
+   * Gap inserted between completed horizontal lines.
+   */
+  runSpacing?: number;
+}
+
+/**
  * Properties for stacking child nodes in the same layout bounds.
  */
 export interface BoxProps extends ComposeCommonProps {
@@ -2987,6 +3013,42 @@ export interface ButtonProps extends ComposeCommonProps {
    * Outline used for button background, border, and clipping.
    */
   shape?: ComposeShape;
+  /**
+   * Foreground color used by the shared Material button renderer.
+   */
+  contentColor?: ComposeColor;
+}
+
+/**
+ * Host popup menu with a labeled anchor and indexed selection callback.
+ */
+export interface DropdownMenuProps extends ComposeCommonProps {
+  /**
+   * Label displayed above the selected value.
+   */
+  label: string;
+  /**
+   * Currently selected text displayed inside the anchor.
+   */
+  text: string;
+  /**
+   * Whether the popup accepts interaction.
+   */
+  enabled?: boolean;
+  /**
+   * Action receiving the selected zero-based item index.
+   */
+  onClick: (arg0: number) => void;
+}
+
+/**
+ * Material floating action with a named icon and standard button properties.
+ */
+export interface FloatingActionButtonProps extends ButtonProps {
+  /**
+   * Material icon displayed inside the floating button.
+   */
+  icon: string;
 }
 
 /**
@@ -3586,6 +3648,26 @@ export interface AlertDialogProps extends ComposeCommonProps {
  */
 export interface ComposeUiFactoryRegistry {
   /**
+   * Creates a text-only Material button.
+   */
+  TextButton: ComposeNodeFactory<ButtonProps>;
+  /**
+   * Creates a filled tonal Material button.
+   */
+  FilledTonalButton: ComposeNodeFactory<ButtonProps>;
+  /**
+   * Creates an anchored popup with indexed item selection.
+   */
+  DropdownMenu: ComposeNodeFactory<DropdownMenuProps>;
+  /**
+   * Creates a floating action button with a named icon.
+   */
+  FloatingActionButton: ComposeNodeFactory<FloatingActionButtonProps>;
+  /**
+   * Creates a compact floating action button with a named icon.
+   */
+  SmallFloatingActionButton: ComposeNodeFactory<FloatingActionButtonProps>;
+  /**
    * Creates a custom modal dialog.
    */
   Dialog: ComposeNodeFactory<DialogProps>;
@@ -3601,6 +3683,10 @@ export interface ComposeUiFactoryRegistry {
    * Creates a horizontal layout container.
    */
   Row: ComposeNodeFactory<RowProps>;
+  /**
+   * Creates a horizontal layout container that wraps child nodes across lines.
+   */
+  FlowRow: ComposeNodeFactory<FlowRowProps>;
   /**
    * Creates a stacking layout container.
    */
@@ -3835,9 +3921,46 @@ export interface ComposeRouteInfo {
 }
 
 /**
+ * Resolved colors and brightness supplied by the current UI host.
+ */
+export interface ComposeThemeSnapshot {
+  /**
+   * Effective host brightness, either light or dark.
+   */
+  brightness: string;
+  /**
+   * Resolved Material color roles encoded as CSS RRGGBBAA hex strings.
+   */
+  colors: Record<string, string>;
+}
+
+/**
+ * Completion returned by a theme change listener.
+ */
+export type ComposeThemeListenerOutput = void | Promise<void>;
+
+/**
+ * Host theme service independent of any WebView or rendering framework.
+ */
+export interface ComposeTheme {
+  /**
+   * Returns the current resolved theme; throws when no UI host supplied a theme.
+   */
+  getCurrent(): ComposeThemeSnapshot;
+  /**
+   * Observes later theme changes and returns an unsubscribe function.
+   */
+  subscribe(listener: (arg0: ComposeThemeSnapshot) => ComposeThemeListenerOutput): () => void;
+}
+
+/**
  * Theme, modifier builder, and component factories supplied to a screen renderer.
  */
 export interface ComposeDslContext {
+  /**
+   * Reads and observes the resolved theme of the current plugin UI host.
+   */
+  Theme: ComposeTheme;
   /**
    * Active Material theme values resolved by the host.
    */

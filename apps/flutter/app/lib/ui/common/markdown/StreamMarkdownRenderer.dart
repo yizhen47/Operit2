@@ -1159,7 +1159,7 @@ int _typewriterTextLength(String text) {
     if (paragraphLines.isEmpty) {
       return;
     }
-    length += paragraphLines.join('\n').length;
+    length += paragraphLines.join('\n').characters.length;
     paragraphLines.clear();
   }
 
@@ -1210,14 +1210,16 @@ int _typewriterTextLength(String text) {
 
 int _typewriterLineLength(String text) {
   if (_headingLevel(text) > 0) {
-    return _markdownHeaderText(text).length;
+    return _markdownHeaderText(text).characters.length;
   }
   if (_isBulletLine(text)) {
-    return text.substring(2).length;
+    return text.substring(2).characters.length;
   }
   if (_isOrderedLine(text)) {
     final match = RegExp(r'^(\d+)\.\s*').firstMatch(text);
-    return match == null ? text.length : text.substring(match.end).length;
+    return match == null
+        ? text.characters.length
+        : text.substring(match.end).characters.length;
   }
-  return text.length;
+  return text.characters.length;
 }

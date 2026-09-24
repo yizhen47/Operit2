@@ -18,6 +18,8 @@ class PackageListItem extends StatefulWidget {
     this.onDetails,
     this.showEnabledSwitch = true,
     this.trailingActions = const <Widget>[],
+    this.hasError = false,
+    this.errorMessage,
   });
 
   final IconData icon;
@@ -29,6 +31,8 @@ class PackageListItem extends StatefulWidget {
   final VoidCallback? onDetails;
   final bool showEnabledSwitch;
   final List<Widget> trailingActions;
+  final bool hasError;
+  final String? errorMessage;
 
   /// Creates the state for an expandable package card.
   @override
@@ -58,6 +62,8 @@ class _PackageListItemState extends State<PackageListItem> {
         .where((item) => item.trim().isNotEmpty)
         .toList(growable: false);
     final borderRadius = BorderRadius.circular(12 * scale);
+    final hasError = widget.hasError;
+    final errorColor = colorScheme.error;
 
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 4 * scale),
@@ -66,8 +72,19 @@ class _PackageListItemState extends State<PackageListItem> {
         layer: OperitGlassSurfaceLayer.card,
         borderRadius: borderRadius,
         border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
+          color: hasError
+              ? errorColor.withValues(alpha: 0.78)
+              : colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
+        shadows: hasError
+            ? <BoxShadow>[
+                BoxShadow(
+                  color: errorColor.withValues(alpha: 0.30),
+                  blurRadius: 18 * scale,
+                  spreadRadius: 1 * scale,
+                ),
+              ]
+            : const <BoxShadow>[],
         material: true,
         child: InkWell(
           borderRadius: borderRadius,
@@ -120,6 +137,18 @@ class _PackageListItemState extends State<PackageListItem> {
                         ],
                       ),
                     ),
+                    if (hasError)
+                      Tooltip(
+                        message: widget.errorMessage ?? '前置插件不可用',
+                        child: Padding(
+                          padding: EdgeInsets.only(left: 6 * scale),
+                          child: Icon(
+                            Icons.error_outline,
+                            color: errorColor,
+                            size: 20 * scale,
+                          ),
+                        ),
+                      ),
                     if (widget.showEnabledSwitch) ...<Widget>[
                       SizedBox(width: 6 * scale),
                       Switch(

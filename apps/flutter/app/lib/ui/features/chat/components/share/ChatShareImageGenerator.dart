@@ -25,6 +25,7 @@ class ChatShareImageGenerator {
   static Future<ChatShareImage> generate({
     required BuildContext context,
     required List<ChatUiMessage> messages,
+    required MarkdownContentSplitter splitMarkdownContent,
   }) async {
     final boundaryKey = GlobalKey();
     final overlay = Overlay.of(context);
@@ -41,9 +42,7 @@ class ChatShareImageGenerator {
                 key: boundaryKey,
                 child: ChatShareImageSurface(
                   messages: messages,
-                  splitMarkdownContent: (content) => _clients
-                      .chatRuntimeHolderMain
-                      .splitMarkdownContent(content: content),
+                  splitMarkdownContent: splitMarkdownContent,
                 ),
               ),
             ),

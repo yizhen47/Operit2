@@ -67,7 +67,7 @@ pub(super) fn newTestJsEngineState(
     let runtime = testJavaScriptRuntimeHost()
         .createHostJavaScriptRuntime()
         .expect("test JavaScript runtime must start");
-    JsEngineState::newWithRuntime(runtime, executionHost, None)
+    JsEngineState::newWithRuntime(runtime, executionHost, None, Arc::new(Mutex::new(None)))
         .expect("test JavaScript state must initialize")
 }
 
@@ -101,6 +101,11 @@ impl ToolPkgTextResourceHost for StaticToolPkgTextResourceHost {
 crate::impl_rejecting_js_tools_host!(TestPluginConfigExecutionHost);
 
 impl JsExecutionHost for TestPluginConfigExecutionHost {
+    /// Returns an empty catalog for tests that do not install runtime tools.
+    fn get_tool_catalog(&self) -> Result<Value, String> {
+        Ok(serde_json::json!({ "tools": [] }))
+    }
+
     /// Executes the System sleep call used by the JavaScript worker regression test.
     fn execute_tool_call(&self, request: JsToolCallRequest) -> JsToolCallResult {
         if request.tool_name == "get_device_location" {
@@ -424,6 +429,28 @@ fn async_tool_call_yields_to_ready_javascript_promise() {
     engine.destroy();
 }
 
+/// Verifies the host tool catalog bridge returns structured schemas to package JavaScript.
+#[test]
+fn tool_catalog_bridge_returns_structured_response() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let output = engine
+        .execute_script_function(
+            "exports.catalog = function() { return getToolCatalog(); };",
+            "catalog",
+            &testParams(),
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect("tool catalog bridge must complete");
+
+    assert_eq!(output.as_deref(), Some(r#"{"tools":[]}"#));
+    engine.destroy();
+}
+
 /// Verifies JavaScript timers race independently from pending Host tool work.
 #[test]
 fn javascript_timer_can_win_race_against_async_tool_call() {
@@ -458,6 +485,109 @@ fn javascript_timer_can_win_race_against_async_tool_call() {
         started.elapsed() < Duration::from_millis(100),
         "timer completion must not wait for tool execution"
     );
+    engine.destroy();
+}
+
+/// Verifies a detached-call preparation predicate is serialized before Rust reads it as text.
+#[test]
+fn detached_call_preparation_accepts_boolean_result() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let mut state = newTestJsEngineState(None);
+    state
+        .initJavaScriptEnvironment()
+        .expect("JavaScript test environment must initialize");
+    state
+        .evalJavaScriptVoid(
+            "var call = __operitRegisterCallSession('detached-call', {}); call.detached = true; call.pendingReferences = 1;",
+        )
+        .expect("detached JavaScript call must initialize");
+
+    state
+        .advanceDetachedJavaScriptExecution()
+        .expect("detached JavaScript call preparation must accept a boolean predicate");
+}
+
+/// Verifies clearing a timer from another call releases the timer owner's reference.
+#[test]
+fn clearing_timer_from_another_call_releases_timer_owner_reference() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("js-engine-tests");
+    let mut state = newTestJsEngineState(None);
+    state
+        .initJavaScriptEnvironment()
+        .expect("JavaScript test environment must initialize");
+    let result = state
+        .evalJavaScriptString(
+            r#"(function() {
+                globalThis.__operitNativeScheduleJavaScriptTimer = function() {};
+                var owner = __operitRegisterCallSession('timer-owner', {});
+                globalThis.__operitCurrentCallId = 'timer-owner';
+                var timerId = setInterval(function() {}, 60000);
+                var ownerPendingBeforeClear = owner.pendingReferences;
+                var clearer = __operitRegisterCallSession('timer-clearer', {});
+                globalThis.__operitCurrentCallId = 'timer-clearer';
+                clearInterval(timerId);
+                return JSON.stringify({
+                    ownerPendingBeforeClear: ownerPendingBeforeClear,
+                    ownerPendingAfterClear: owner.pendingReferences,
+                    clearerPendingAfterClear: clearer.pendingReferences
+                });
+            })()"#,
+        )
+        .expect("cross-call timer cleanup must return reference counts");
+    let counts: Value = serde_json::from_str(&result).expect("timer reference count JSON");
+    assert_eq!(counts["ownerPendingBeforeClear"], 1);
+    assert_eq!(counts["ownerPendingAfterClear"], 0);
+    assert_eq!(counts["clearerPendingAfterClear"], 0);
+}
+
+/// Verifies an asynchronous callback failure cleans its call state before the next request.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn failed_async_callback_does_not_poison_quickjs_engine() {
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let params = testParams();
+    let error = engine
+        .execute_script_function(
+            r#"
+                exports.fail_timer = function() {
+                    return new Promise(function(resolve) {
+                        setTimeout(function() {
+                            throw new Error('timer callback failed');
+                        }, 1);
+                        setTimeout(function() {
+                            resolve('must not complete');
+                        }, 50);
+                    });
+                };
+            "#,
+            "fail_timer",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect_err("timer callback failure must reject its request");
+
+    assert_eq!(error.kind, JsExecutionErrorKind::Runtime);
+
+    let output = engine
+        .execute_script_function(
+            "exports.ready_after_failure = function() { return 'ready'; };",
+            "ready_after_failure",
+            &params,
+            &BTreeMap::new(),
+            None,
+            true,
+            2,
+            None,
+        )
+        .expect("the next request must run after an asynchronous callback failure");
+
+    assert_eq!(output.as_deref(), Some("\"ready\""));
     engine.destroy();
 }
 
@@ -1615,6 +1745,129 @@ fn toolpkg_ipc_main_request_uses_bound_resource_host() {
         0,
         "IPC package module reads must use the context-bound resource host",
     );
+    engine.destroy();
+}
+
+/// Exercises the packaged plan question screen through the asynchronous host used by TUI.
+#[test]
+fn render_planask_through_async_compose_host() {
+    ensure_test_runtime_root();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(4).unwrap();
+    let dist = root.join("plugins/packages/buildin/plan_mode/dist");
+    let script = std::fs::read_to_string(dist.join("ui/planask/index.ui.js")).unwrap();
+    let mut resources = BTreeMap::new();
+    collect_message_insert_text_resources(&dist, &dist, &mut resources);
+    let mut params = testParams();
+    params.insert("packageName".into(), serde_json::json!("com.operit.plan_mode_bundle"));
+    params.insert("toolPkgId".into(), serde_json::json!("com.operit.plan_mode_bundle"));
+    params.insert("__operit_toolpkg_runtime_kind".into(), serde_json::json!("ui"));
+    params.insert("__operit_script_screen".into(), serde_json::json!("dist/ui/planask/index.ui.js"));
+    params.insert("routeInstanceId".into(), serde_json::json!("test-planask"));
+    params.insert("state".into(), serde_json::json!({"xmlContent": "<planask><title>Plan</title><question id=\"q1\"><title>Choose</title><option id=\"a\">A</option><option id=\"b\">B</option></question></planask>"}));
+    params.insert("memo".into(), serde_json::json!({}));
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let raw = expect_js_output(runtime.block_on(engine.execute_compose_dsl_script_async(script, params.clone(), BTreeMap::new(), Arc::new(resources))), "planask async render");
+    let result: Value = serde_json::from_str(&raw).unwrap();
+    assert!(result["tree"].is_object(), "Unexpected render result: {raw}");
+    params.insert("state".into(), result["state"].clone());
+    params.insert("memo".into(), result["memo"].clone());
+    let action = result["tree"]["props"]["onLoad"]["__actionId"].as_str().unwrap().to_string();
+    let intermediate = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = intermediate.clone();
+    let raw = expect_js_output(runtime.block_on(engine.dispatch_compose_dsl_action_result_async(action, None, params, BTreeMap::new(), Some(Arc::new(move |value| captured.lock().unwrap().push(value))))), "planask onLoad");
+    let result: Value = serde_json::from_str(&raw).unwrap();
+    assert!(result["tree"].is_object(), "Unexpected action result: {raw}");
+    let intermediate = intermediate.lock().unwrap();
+    assert!(!intermediate.is_empty(), "onLoad must deliver intermediate renders");
+    for raw in intermediate.iter() {
+        let result: Value = serde_json::from_str(raw).unwrap();
+        assert!(result["tree"].is_object(), "Unexpected intermediate result: {raw}");
+    }
+    engine.destroy();
+}
+
+/// Verifies a detached Compose timer can publish a render after its action settles.
+#[test]
+fn compose_timer_state_change_reaches_intermediate_render_after_action_completion() {
+    ensure_test_runtime_root();
+    let script = r#"
+        function Screen(ctx) {
+            const [count, setCount] = ctx.useState('count', 0);
+            const timer = ctx.useRef('timer', null);
+            const start = function() {
+                timer.current = setInterval(function() {
+                    setCount(1);
+                    clearInterval(timer.current);
+                }, 5);
+            };
+            return ctx.UI.Column({ onLoad: start }, [
+                ctx.UI.Text({ text: String(count) })
+            ]);
+        }
+        exports.default = Screen;
+    "#;
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let runtime =
+        tokio::runtime::Runtime::new().expect("JavaScript async test runtime must start");
+    let params = testParams();
+    let renderedRaw = expect_js_output(
+        runtime.block_on(engine.execute_compose_dsl_script_async(
+            script.to_string(),
+            params.clone(),
+            BTreeMap::new(),
+            Arc::new(BTreeMap::new()),
+        )),
+        "Compose timer initial render",
+    );
+    let rendered: Value = serde_json::from_str(&renderedRaw).expect("initial render JSON");
+    let actionId = rendered["tree"]["props"]["onLoad"]["__actionId"]
+        .as_str()
+        .expect("Compose onLoad action id")
+        .to_string();
+    let mut actionParams = params;
+    actionParams.insert("state".to_string(), rendered["state"].clone());
+    actionParams.insert("memo".to_string(), rendered["memo"].clone());
+    let intermediate = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let intermediateForCallback = intermediate.clone();
+    let finalRaw = expect_js_output(
+        runtime.block_on(engine.dispatch_compose_dsl_action_result_async(
+            actionId,
+            None,
+            actionParams,
+            BTreeMap::new(),
+            Some(Arc::new(move |value| {
+                intermediateForCallback
+                    .lock()
+                    .expect("Compose timer intermediate mutex poisoned")
+                    .push(value);
+            })),
+        )),
+        "Compose timer action",
+    );
+    let finalResult: Value = serde_json::from_str(&finalRaw).expect("final action JSON");
+    assert_eq!(finalResult["state"]["count"], 0);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if intermediate
+            .lock()
+            .expect("Compose timer intermediate mutex poisoned")
+            .iter()
+            .any(|raw| {
+                serde_json::from_str::<Value>(raw)
+                    .ok()
+                    .and_then(|value| value["state"]["count"].as_i64())
+                    == Some(1)
+            })
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "detached timer render was not delivered"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
     engine.destroy();
 }
 

@@ -122,12 +122,21 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   StreamSubscription<core_proxy.RuntimeHostInteractionRequest>?
   _webAccessPairingSubscription;
   Future<void> _webAccessPairingDialogQueue = Future<void>.value();
+  final RuntimeBootstrapManager _runtimeManager =
+      RuntimeBootstrapManager.instance;
 
   /// Subscribes to native Web Access pairing request events.
   @override
   void initState() {
     super.initState();
-    if (kIsWeb) {
+    _runtimeManager.addListener(_syncPairingSubscription);
+    _syncPairingSubscription();
+  }
+
+  /// Opens pairing event monitoring after runtime storage configuration.
+  void _syncPairingSubscription() {
+    if (kIsWeb || !_runtimeManager.runtimeConfigured ||
+        _webAccessPairingSubscription != null) {
       return;
     }
     _webAccessPairingSubscription = _coreClients
@@ -153,6 +162,7 @@ class _AppDialogHostState extends State<_AppDialogHost> {
   /// Cancels native Web Access pairing request event monitoring.
   @override
   void dispose() {
+    _runtimeManager.removeListener(_syncPairingSubscription);
     unawaited(_webAccessPairingSubscription?.cancel());
     super.dispose();
   }

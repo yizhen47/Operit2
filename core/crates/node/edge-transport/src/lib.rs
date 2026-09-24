@@ -17,7 +17,6 @@ use uuid::Uuid;
 
 pub mod auth;
 pub mod pairing;
-#[cfg(not(target_os = "espidf"))]
 pub mod serial;
 pub mod serial_codec;
 pub mod tcp;
@@ -434,6 +433,7 @@ impl CoreLinkPushSession for EdgePeerPushSession {
 pub struct EdgeSpaceRouteClient {
     peer: EdgePeerLink,
     spaceId: String,
+    originNodeId: String,
     targetNodeId: String,
     ttl: u32,
     routeKind: RoutedCoreRequestKind,
@@ -443,12 +443,14 @@ impl EdgeSpaceRouteClient {
     pub fn new(
         peer: EdgePeerLink,
         spaceId: String,
+        originNodeId: String,
         targetNodeId: String,
         ttl: u32,
     ) -> Self {
         Self {
             peer,
             spaceId,
+            originNodeId,
             targetNodeId,
             ttl,
             routeKind: RoutedCoreRequestKind::SpaceRoute,
@@ -457,14 +459,15 @@ impl EdgeSpaceRouteClient {
 
     /// Delegates Binding resolution to the paired Space router without keeping
     /// a business database on Edge.
-    pub fn throughAdjacent(peer: EdgePeerLink, spaceId: String, adjacentNodeId: String, ttl: u32) -> Self {
-        Self { peer, spaceId, targetNodeId: adjacentNodeId, ttl,
+    pub fn throughAdjacent(peer: EdgePeerLink, spaceId: String, originNodeId: String, adjacentNodeId: String, ttl: u32) -> Self {
+        Self { peer, spaceId, originNodeId, targetNodeId: adjacentNodeId, ttl,
             routeKind: RoutedCoreRequestKind::SpaceBinding }
     }
 
     fn route<T>(&self, payload: T) -> RoutedCoreRequest<T> {
         RoutedCoreRequest {
             spaceId: self.spaceId.clone(),
+            originNodeId: self.originNodeId.clone(),
             targetNodeId: self.targetNodeId.clone(),
             ttl: self.ttl,
             routeKind: self.routeKind,
@@ -568,7 +571,7 @@ mod tests {
             tx: edgeTx,
             rx: Mutex::new(edgeRx),
         }));
-        let client = EdgeSpaceRouteClient::new(peer, "space".into(), "executor".into(), 8);
+        let client = EdgeSpaceRouteClient::new(peer, "space".into(), "edge".into(), "executor".into(), 8);
         assert!(client.shouldRoute("sendUserMessage", &CoreValue::emptyMap()).unwrap());
         let server = tokio::spawn(async move {
             let frame = coreRx.recv().await.unwrap();
@@ -593,7 +596,7 @@ mod tests {
                 payload: LinkFramePayload::PeerFrame(PeerFrame {
                     messageId: "inbound".into(),
                     payload: PeerFramePayload::Request(PeerRequest::Call(RoutedCoreRequest {
-                        spaceId: "space".into(), targetNodeId: "edge".into(), ttl: 8,
+                        spaceId: "space".into(), originNodeId: "edge".into(), targetNodeId: "edge".into(), ttl: 8,
                         routeKind: RoutedCoreRequestKind::SpaceRoute, payload: incoming,
                     })),
                 }),

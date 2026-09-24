@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::toolpkg::ToolPkgParser::ToolPkgManifestRequirement;
+use crate::toolpkg::ToolPkgParser::{ToolPkgContainerRuntime, ToolPkgManifestRequirement};
 
 /// Summarizes one ToolPkg subpackage and its enabled state.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -122,6 +122,19 @@ pub struct ToolPkgUiRoute {
     pub title: String,
     pub description: String,
     pub moduleSpec: BTreeMap<String, Value>,
+    pub keepAlive: bool,
+}
+
+/// Describes one enabled Compose DSL contribution to a host-owned chat composer slot.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ToolPkgChatComposerSlot {
+    pub containerRuntime: ToolPkgContainerRuntime,
+    pub containerPackageName: String,
+    pub contributionId: String,
+    pub slot: String,
+    pub screen: String,
+    pub order: i32,
     pub keepAlive: bool,
 }
 

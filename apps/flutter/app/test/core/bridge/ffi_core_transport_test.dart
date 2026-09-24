@@ -62,12 +62,13 @@ class _HostConnection {
   /// Publishes function pointers using the same versioned descriptor as the Rust host.
   String descriptor() => jsonEncode({
     'version': 1,
-    'session': token.address,
+    'session': token.address.toString(),
     'attach':
         Pointer.fromFunction<
               Bool Function(Pointer<Void>, Pointer<Void>, Int64)
             >(_attach, false)
-            .address,
+            .address
+            .toString(),
     'submit':
         Pointer.fromFunction<
               Void Function(
@@ -78,14 +79,15 @@ class _HostConnection {
                 UintPtr,
               )
             >(_submit)
-            .address,
+            .address
+            .toString(),
     'allocate': Pointer.fromFunction<Pointer<Uint8> Function(UintPtr)>(
       _allocate,
-    ).address,
+    ).address.toString(),
     'free': Pointer.fromFunction<Void Function(Pointer<Uint8>, UintPtr)>(
       _free,
-    ).address,
-    'release': calloc.nativeFree.address,
+    ).address.toString(),
+    'release': calloc.nativeFree.address.toString(),
   });
 
   /// Copies a framed typed-data message through the actual Dart VM native API.
@@ -275,6 +277,25 @@ void main() {
     expect(await proxy.call(_call('two', 'echo', 'text')), 'text');
     expect((await proxy.watchSnapshot(_watch('items'))).value, 'snapshot');
     expect(platformMethods, ['connectCoreFfi']);
+  });
+
+  test('retries connection after storage becomes configured', () async {
+    var attempts = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('operit/runtime'), (call) async {
+          attempts++;
+          if (attempts == 1) {
+            throw PlatformException(code: 'OPERIT_RUNTIME_ERROR',
+                message: 'Runtime and workspace roots are not configured');
+          }
+          host = _HostConnection();
+          _connections[host.token.address] = host;
+          return host.descriptor();
+        });
+    await expectLater(proxy.call(_call('before', 'echo', 'before')),
+        throwsA(isA<PlatformException>()));
+    expect(await proxy.call(_call('after', 'echo', 'ready')), 'ready');
+    expect(attempts, 2);
   });
 
   test('concurrent replies retain their request identity', () async {

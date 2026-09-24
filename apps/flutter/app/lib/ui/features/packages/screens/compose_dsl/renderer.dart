@@ -12,6 +12,7 @@ class _ComposeDslRenderer extends StatelessWidget {
     required this.splitMarkdownContent,
     this.nodePath = 'root',
     this.modifierScope = _ComposeDslModifierScope.normal,
+    this.embedDialog = false,
   });
 
   final _ComposeDslNode node;
@@ -22,18 +23,39 @@ class _ComposeDslRenderer extends StatelessWidget {
   final MarkdownContentSplitter splitMarkdownContent;
   final String nodePath;
   final _ComposeDslModifierScope modifierScope;
+  final bool embedDialog;
 
   /// Builds the widget for the current DSL state.
   @override
   Widget build(BuildContext context) {
-    return _withModifier(
-      context,
-      _buildNode(context),
-      node.props,
-      onAction,
-      nodeType: node.type,
-      modifierScope: modifierScope,
+    return _guardNodeBuild(
+      () => _withModifier(
+        context,
+        _buildNode(context),
+        node.props,
+        onAction,
+        nodeType: node.type,
+        modifierScope: modifierScope,
+      ),
     );
+  }
+
+  /// Contains invalid plugin nodes without installing a global Flutter error handler.
+  Widget _guardNodeBuild(Widget Function() buildNode) {
+    try {
+      return buildNode();
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'event=compose_node_render_failed '
+        'context=${webViewHostContext.executionContextKey} '
+        'routeInstance=${webViewHostContext.routeInstanceId} '
+        'node=$nodePath type=${node.type}',
+        tag: 'ToolPkgUiLauncher',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return const SizedBox.shrink();
+    }
   }
 
   /// Builds build node for the Compose DSL renderer.
@@ -43,6 +65,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       case 'Column':
         return _ComposeFlex(
           direction: Axis.vertical,
+          mainAxisSize: MainAxisSize.min,
           nodes: _slotNodes('content', useChildren: true),
           crossAxisAlignment: _crossAxis(node.props['horizontalAlignment']),
           mainAxisAlignment: _mainAxis(node.props['verticalArrangement']),
@@ -64,7 +87,7 @@ class _ComposeDslRenderer extends StatelessWidget {
       case 'Row':
         final contentNodes = _slotNodes('content', useChildren: true);
         return LayoutBuilder(
-          builder: (context, constraints) {
+          builder: (context, constraints) => _guardNodeBuild(() {
             final children = _buildRowChildren(
               contentNodes,
               pathPrefix: '$nodePath:content',
@@ -84,7 +107,24 @@ class _ComposeDslRenderer extends StatelessWidget {
               ),
               children: children,
             );
-          },
+          }),
+        );
+      case 'FlowRow':
+        return Wrap(
+          spacing: _flowSpacing(
+            node.props['horizontalArrangement'],
+            node.props['spacing'],
+          ),
+          runSpacing: _flowSpacing(
+            node.props['verticalArrangement'],
+            node.props['runSpacing'] ?? node.props['spacing'],
+          ),
+          alignment: _wrapAlignment(node.props['horizontalArrangement']),
+          runAlignment: _wrapAlignment(node.props['verticalArrangement']),
+          crossAxisAlignment: _wrapCrossAxis(
+            node.props['itemVerticalAlignment'],
+          ),
+          children: _slotChildren('content', useChildren: true),
         );
       case 'LazyRow':
         return _lazyList(Axis.horizontal);

@@ -8,6 +8,8 @@ pub mod AgreementPreferences;
 pub mod AndroidPermissionPreferences;
 #[path = "ApiPreferences.rs"]
 pub mod ApiPreferences;
+#[path = "CodexAuthPreferences.rs"]
+pub mod CodexAuthPreferences;
 #[path = "CharacterCardBilingualData.rs"]
 pub mod CharacterCardBilingualData;
 #[path = "CharacterCardManager.rs"]

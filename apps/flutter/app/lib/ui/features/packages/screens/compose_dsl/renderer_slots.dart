@@ -109,7 +109,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
         .toList(growable: false);
   }
 
-  /// Wraps direct text children in loose flex when the Row has finite width.
+  /// Applies implicit text flex only to bounded rows without explicit weights.
   List<Widget> _buildRowChildren(
     List<_ComposeDslNode> nodes, {
     required String pathPrefix,
@@ -120,7 +120,7 @@ extension _ComposeRendererSlots on _ComposeDslRenderer {
       pathPrefix: pathPrefix,
       modifierScope: _ComposeDslModifierScope.row,
     );
-    if (!boundedWidth) {
+    if (!boundedWidth || _nodesRequireRowFlex(nodes)) {
       return widgets;
     }
     return nodes

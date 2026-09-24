@@ -11,6 +11,7 @@ enum WorkspaceTabKind {
   browser,
   webVisit,
   filePreview,
+  plugin,
 }
 
 enum WorkspaceFilePreviewKind {
@@ -45,6 +46,9 @@ class WorkspaceTab {
     this.terminalSessionId,
     this.terminalType,
     this.terminalWorkingDir,
+    this.pluginEntryId,
+    this.pluginPackageName,
+    this.pluginUiModuleId,
     this.identityToken = '',
   });
 
@@ -64,7 +68,19 @@ class WorkspaceTab {
   final String? terminalSessionId;
   final String? terminalType;
   final String? terminalWorkingDir;
+  final String? pluginEntryId;
+  final String? pluginPackageName;
+  final String? pluginUiModuleId;
   final String identityToken;
+}
+
+/// Carries a regular workspace tab through an internal pane drag operation.
+@immutable
+class WorkspaceTabDragPayload {
+  /// Creates a payload for one tab that can move between workspace panes.
+  const WorkspaceTabDragPayload({required this.tab});
+
+  final WorkspaceTab tab;
 }
 
 WorkspaceFilePreviewKind workspacePreviewKindForPath(String path) {

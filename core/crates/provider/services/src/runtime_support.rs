@@ -122,6 +122,21 @@ pub trait ProviderRuntimeSupport: Send + Sync {
         modelId: &str,
     ) -> Result<ResolvedModelConfig, String>;
 
+    /// Returns the saved ChatGPT Codex session.
+    fn loadCodexTokens(
+        &self,
+    ) -> Result<crate::chat::llmprovider::CodexOAuth::CodexOAuthTokens, String> {
+        Err("Codex authorization is required".to_string())
+    }
+
+    /// Persists a refreshed ChatGPT Codex session.
+    fn saveCodexTokens(
+        &self,
+        _tokens: crate::chat::llmprovider::CodexOAuth::CodexOAuthTokens,
+    ) -> Result<(), String> {
+        Err("Codex authorization cannot be saved".to_string())
+    }
+
     /// Returns the provider profile for a provider id.
     fn providerProfile(
         &self,

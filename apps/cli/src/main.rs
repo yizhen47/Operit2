@@ -18,6 +18,7 @@ mod web_access_assets;
 
 pub(crate) use bootstrap::{
     create_cli_core_application, create_cli_core_application_configured,
+    create_cli_core_application_configured_with_toast_host,
     create_cli_core_application_without_space_sync,
 };
 pub(crate) use chat_runtime::{

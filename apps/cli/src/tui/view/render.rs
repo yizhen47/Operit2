@@ -61,6 +61,21 @@ impl OperitTui {
         self.render_footer(frame, root[2]);
         self.render_command_popup(frame, main[1]);
 
+        if let Some(editor) = &self.compose.editor {
+            let area = centered_rect(80, 25, frame.area());
+            frame.render_widget(Clear, area);
+            frame.render_widget(
+                Paragraph::new(editor.value.as_str())
+                    .wrap(Wrap { trim: false })
+                    .block(
+                        Block::default()
+                            .title("Edit · Enter: apply · Esc: cancel")
+                            .borders(Borders::ALL),
+                    ),
+                area,
+            );
+        }
+
         if self.show_model_chooser {
             self.render_model_chooser(frame);
         }
@@ -188,6 +203,13 @@ impl OperitTui {
             content_width,
             &mut self.typewriter_state,
             &mut self.transcript_render_cache,
+            text,
+        );
+        self.compose.project(
+            &mut transcript_lines,
+            &self.transcript_render_cache.xml,
+            &mut self.transcript_render_cache.fold_hits,
+            content_width,
             text,
         );
         self.transcript_copy_lines = transcript_lines.iter().map(transcript_copy_line).collect();
@@ -409,7 +431,7 @@ impl OperitTui {
                     Style::default()
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(spec.usage.to_string(), style),
+                    Span::styled(spec.usage().to_string(), style),
                     Span::styled(
                         format!("  {}", spec.description(self.language)),
                         Style::default().fg(theme::TEXT_SUBTLE),
