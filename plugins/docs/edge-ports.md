@@ -103,7 +103,7 @@ try {
 插件可使用 [JS/TS 流式识别适配示例](../packages/examples/edge_audio_stream/README.md)
 连接自己的本地或远端 STT 会话。该示例约定 `start/write/finish/abort`，不内置识别模型。
 已有接受完整音频的 STT 接口需要格式转换；分段调用完整文件识别不等于模型原生流式识别。
-格式、终态、时限与设备 Host 适配详见 [流式音频文档](../../docs/edge-streaming-audio.md)。
+格式、终态、时限与Edge 音频源适配详见 [流式音频文档](../../docs/edge-streaming-audio.md)。
 
 ## 原生场景显示
 
