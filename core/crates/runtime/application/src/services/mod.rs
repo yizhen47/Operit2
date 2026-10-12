@@ -71,3 +71,6 @@ pub mod MemoryManagementService;
 #[path = "AttachmentTransferManager.rs"]
 pub mod AttachmentTransferManager;
 pub use AttachmentTransferManager::*;
+
+#[path = "EdgeSpeechInput.rs"]
+pub(crate) mod EdgeSpeechInput;

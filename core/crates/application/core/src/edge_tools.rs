@@ -27,7 +27,7 @@ impl EdgeToolRuntime for CoreEdgeToolRuntime {
         let allowed = matches!(
             (request.target.as_str(), request.methodName.as_str()),
             ("edge.plugins", "invoke") | ("edge.deviceIo", "getDigitalOutput" | "setDigitalOutput")
-                | ("edge.audio", "listInputs" | "startInput" | "stopInput")
+                | ("edge.audio", "listInputs" | "startInput" | "stopInput" | "finishInput")
         );
         if !allowed {
             return Box::pin(async {
