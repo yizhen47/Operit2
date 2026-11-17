@@ -105,8 +105,14 @@ class QQBotService {
     const accountId=nonblank(this.config.appId,"AppID"), conversationId=scene==="group"?event.groupOpenId:event.userOpenId;
     return {key:messageKey(["qq",accountId,scene,conversationId,event.messageId]),channel:"qq",accountId,
       messageId:event.messageId,conversationId,authorId:event.userOpenId,text:chatText(event),timestamp:event.timestamp,
-      autoReplyEnabled:this.shouldReply(event),author:event.author,messageType:event.messageType,attachments:event.attachments,elements:event.elements,
-      card:event.card,referenceIndex:event.referenceIndex,referencedMessageIndex:event.referencedMessageIndex,
+      autoReplyEnabled:this.shouldReply(event),
+      ...(event.author === undefined ? {} : {author:event.author}),
+      ...(event.messageType === undefined ? {} : {messageType:event.messageType}),
+      ...(event.attachments === undefined ? {} : {attachments:event.attachments}),
+      ...(event.elements === undefined ? {} : {elements:event.elements}),
+      ...(event.card === undefined ? {} : {card:event.card}),
+      ...(event.referenceIndex === undefined ? {} : {referenceIndex:event.referenceIndex}),
+      ...(event.referencedMessageIndex === undefined ? {} : {referencedMessageIndex:event.referencedMessageIndex}),
       context:JSON.parse(JSON.stringify({scene,replyHint:event.replyHint,raw:event.rawPayload??null}))};
   }
   private shouldReply(event: InboundEvent): boolean {

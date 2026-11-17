@@ -296,6 +296,31 @@ test("channel inbox persists independently from QQ automatic reply and deduplica
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
+test("plain QQ messages omit absent rich fields and remain durable for capture and subscribers", async () => {
+  const f = fixture();
+  await f.complete(f.service.channel({ action: "configure", capture: true }));
+  await f.complete(f.service.receive({ action: "start" }));
+  f.socket.frame(c2c("first", "alice")); await f.time.advance(300);
+  assert.equal((await f.service.receive({ action: "status" })).status.service.status, "ready");
+  const conversations = await f.service.channel({ action: "conversations" });
+  await f.service.channel({ action: "subscribe", consumerId: "regression", routes: [{ conversationKey: conversations.conversations[0].key, since: 0 }] });
+  f.socket.frame(c2c("second", "alice")); await f.time.advance(300);
+  const status = await f.service.receive({ action: "status" });
+  assert.equal(status.status.service.status, "ready");
+  assert.equal(status.status.service.lastError, "");
+  const captured = await f.service.channel({ action: "peek" });
+  assert.equal(captured.messages.length, 2);
+  for (const message of captured.messages) {
+    for (const field of ["messageType", "card", "referenceIndex", "referencedMessageIndex"]) assert.equal(Object.hasOwn(message, field), false, field);
+    assert.deepEqual(plain(message.attachments), []);
+    assert.deepEqual(plain(message.elements), []);
+  }
+  const deliveries = await f.service.channel({ action: "peek", consumerId: "regression" });
+  assert.equal(deliveries.messages.length, 1);
+  assert.equal(deliveries.messages[0].messageId, "second");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
 test("QQ capture failure stops the listener instead of accepting the message", async () => {
   const f = fixture();
   await f.complete(f.service.channel({ action: "configure", capture: true }));
