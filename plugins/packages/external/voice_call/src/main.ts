@@ -2,6 +2,8 @@ import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-d
 import type { Chat } from "../../../../types/chat";
 import { characterCards, type ChatDisplayIdentity, type ChatDisplayParticipant } from "./dependencies/character_cards/api.js";
 
+import { readCallPresentation } from "./presentation.js";
+
 const PACKAGE = "com.operit.voice_call";
 const CONTROL_ROUTE = `toolpkg:${PACKAGE}:ui:control`;
 const WINDOW = "voice-call";
@@ -195,20 +197,10 @@ export function call(ctx: ComposeDslContext): ComposeNode {
 
   ctx.useEffect("call-lifetime", () => () => { void stopCall(); }, []);
 
-  /** Uses the same default artwork as the required character card plugin. */
-  async function readPresentation(chatId: string | null) {
-    const value = await characterCards.chat.presentation({ chatId });
-    return {
-      identity: { title: value.identity?.title ?? "Operit",
-        avatarUri: value.identity?.avatarUri || await characterCards.defaultAvatar() },
-      participants: value.kind === "group" ? value.participants : [],
-    };
-  }
-
   ctx.useEffect("call-avatar", () => {
     let disposed = false;
     const request = ++identityRequest.current;
-    void readPresentation(sourceChatId).then(value => {
+    void readCallPresentation(sourceChatId).then(value => {
       if (!disposed && request === identityRequest.current) {
         setIdentity(value.identity);
         setParticipants(value.participants);
@@ -326,7 +318,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         const chat = await Tools.Chat.createNew({ setAsCurrentChat: false, ...(sourceChatId ? { sourceChatId } : {}) });
         session.chatId = chat.chatId;
       }
-      const presentation = await readPresentation(session.chatId);
+      const presentation = await readCallPresentation(session.chatId);
       if (!session.active) return;
       setIdentity(presentation.identity);
       setParticipants(presentation.participants);

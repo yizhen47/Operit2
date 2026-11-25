@@ -4,9 +4,11 @@ import { readFileSync } from "node:fs";
 import { loadModule, plain } from "../../../buildin/character_cards/tests/runtime.mjs";
 
 /** Supplies stateful Compose primitives while retaining the real call screen and dependency client. */
-function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, files, groupTurn, participants = [], kind = "group" } = {}) {
+function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, files, groupTurn, participants = [], kind = typeof participants === "function" || participants.length > 0 ? "group" : "card", dependency } = {}) {
   const states = new Map(), refs = new Map(), effects = new Map(), calls = [];
-  const routes = [], entries = [];
+  const routes = [], entries = [], cards = new Map();
+  const roster = payload => typeof participants === "function" ? participants(payload) : participants;
+  const groupId = chatId => chatId === null ? "preview-group" : `${chatId}-group`;
   const color = { copy() { return color; } };
   const ctx = {
     useState(key, initial) {
@@ -40,9 +42,27 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, 
         assert.equal(packageId, "com.operit.character_cards");
         if (method === "avatar.default") return "data:image/png;base64,character-default-avatar";
         if (method === "chat.groupTurn") return groupTurn ? groupTurn(plain(payload)) : { status: "not_group", replies: [], error: null };
-        assert.equal(method, "chat.presentation");
-        calls.push(plain(payload));
-        return { kind, identity: await resolveIdentity(payload), participants: typeof participants === "function" ? participants(payload) : participants };
+        if (dependency) {
+          const result = dependency(method, plain(payload));
+          if (result !== undefined) return result;
+        }
+        if (method === "chat.identity") {
+          calls.push(plain(payload));
+          return resolveIdentity(payload);
+        }
+        if (method === "activePrompt.get") return kind === "group"
+          ? { CharacterGroup: { id: groupId(null) } } : { CharacterCard: { id: "solo" } };
+        if (method === "chat.configuration.binding.read") return {
+          chatId: payload.chatId, selection: kind === "group" ? `group:${groupId(payload.chatId)}` : "card:solo",
+        };
+        if (method === "group.get") {
+          const chatId = payload.id === groupId(null) ? null : payload.id.slice(0, -"-group".length);
+          const members = roster({ chatId });
+          for (const member of members) cards.set(member.id, member);
+          return { id: payload.id, members: members.map((member, index) => ({ characterCardId: member.id, orderIndex: index })) };
+        }
+        assert.equal(method, "character.get");
+        return cards.get(payload.id);
       },
     },
     Tools: {
@@ -534,5 +554,48 @@ test("one-member groups receive a tile and single roles keep their portrait layo
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(plain(screen.render().props.participants), kind === "group"
       ? [{ id: "solo", title: "Solo member", imageUri: "solo.png" }] : []);
+  }
+});
+
+/** Saved order, exact member identities and actual read failures are checked at the existing API boundary. */
+test("roster uses existing public APIs and sorts the saved member order", async () => {
+  const methods = [];
+  const screen = callScreen(() => ({ title: "Friends", avatarUri: "friends.png" }), {
+    kind: "group",
+    dependency(method, payload) {
+      methods.push(method);
+      if (method === "group.get") return { id: payload.id, members: [
+        { characterCardId: "bob", orderIndex: 2 }, { characterCardId: "alice", orderIndex: 0 },
+      ] };
+      if (method === "character.get") return { id: payload.id, name: payload.id, avatarUri: null };
+    },
+  });
+  screen.render();
+  screen.effects.get("call-avatar")();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(plain(screen.render().props.participants.map(member => member.id)), ["alice", "bob"]);
+  assert.ok(methods.includes("activePrompt.get"));
+  assert.equal(methods.includes("chat.presentation"), false);
+});
+
+test("invalid or unavailable group members stop the call before recording", async () => {
+  for (const failure of ["deleted", "duplicate", "wrong-chat", "wrong-group", "wrong-card", "empty-group"]) {
+    const screen = callScreen(() => ({ title: "Friends", avatarUri: "friends.png" }), {
+      kind: "group", participants: [{ id: "alice", name: "Alice", avatarUri: null }],
+      dependency(method, payload) {
+        if (failure === "wrong-chat" && method === "chat.configuration.binding.read") return { chatId: "other", selection: "group:friends" };
+        if (failure === "wrong-group" && method === "group.get") return { id: "other", members: [{ characterCardId: "alice", orderIndex: 0 }] };
+        if (failure === "empty-group" && method === "group.get") return { id: payload.id, members: [] };
+        if (failure === "duplicate" && method === "group.get") return { id: payload.id, members: [
+          { characterCardId: "alice", orderIndex: 0 }, { characterCardId: "alice", orderIndex: 1 },
+        ] };
+        if (failure === "deleted" && method === "character.get") throw new Error("Member was deleted");
+        if (failure === "wrong-card" && method === "character.get") return { id: "other", name: "Other", avatarUri: null };
+      },
+    });
+    await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+    assert.equal(screen.states.get("phase"), "error", failure);
+    assert.ok(screen.states.get("failure"), failure);
+    assert.equal(screen.calls.includes("record"), false, failure);
   }
 });
